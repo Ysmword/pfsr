@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Redis 高可用演练 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root { --accent: #ef4444; --accent-dim: rgba(239,68,68,0.2); }
+
+    /* ── 拓扑节点 ── */
+    .topo-wrap { background: #07070f; border: 1px solid #2a2a3a; border-radius: var(--r-md); padding: 20px; margin: 10px 0; position: relative; }
+    .topo-nodes { display: flex; gap: 24px; justify-content: center; align-items: flex-start; flex-wrap: wrap; }
+    .topo-node {
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      padding: 12px 16px; border-radius: var(--r-md); border: 2px solid;
+      min-width: 90px; text-align: center; transition: all 0.4s; cursor: default; user-select: none;
+    }
+    .topo-node.master   { border-color: #ef4444; background: rgba(239,68,68,0.1); }
+    .topo-node.slave    { border-color: #7c83ff; background: rgba(124,131,255,0.1); }
+    .topo-node.sentinel { border-color: #f59e0b; background: rgba(245,158,11,0.1); }
+    .topo-node.down     { border-color: #374151; background: rgba(55,65,81,0.2); opacity: 0.45; }
+    .topo-node.promoted { border-color: #10b981; background: rgba(16,185,129,0.15); }
+    .node-icon { font-size: 22px; }
+    .node-name { font-size: 12px; font-weight: 700; }
+    .node-role { font-size: 10px; margin-top: 2px; }
+    .topo-node.master   .node-role { color: #ef4444; }
+    .topo-node.slave    .node-role { color: #7c83ff; }
+    .topo-node.sentinel .node-role { color: #f59e0b; }
+    .topo-node.promoted .node-role { color: #10b981; }
+
+    .conn-line { font-size: 18px; color: var(--text-dim); align-self: center; }
+
+    /* 操作日志 */
+    .event-log {
+      background: #0a0a14; border: 1px solid #1a1a2a; border-radius: var(--r-sm);
+      padding: 10px 14px; font-size: 12px; font-family: 'Monaco','Menlo',monospace;
+      color: #64748b; min-height: 56px; line-height: 1.8; margin: 8px 0;
+    }
+    .log-ok   { color: #10b981; }
+    .log-warn { color: #f59e0b; }
+    .log-err  { color: #ef4444; }
+    .log-info { color: #7c83ff; }
+
+    /* 步骤按钮 */
+    .step-btns { display: flex; flex-direction: column; gap: 8px; }
+
+    /* 投票 */
+    .vote-bar { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+    .vote-label { font-size: 12px; color: var(--text-dim); min-width: 80px; }
+    .vote-track { flex: 1; background: #1a1a2a; border-radius: 6px; height: 20px; overflow: hidden; }
+    .vote-fill  { height: 100%; border-radius: 6px; transition: width 0.5s; display: flex; align-items: center; padding-left: 8px; font-size: 11px; font-weight: 700; color: white; }
+    .vote-yes   { background: #10b981; }
+    .vote-no    { background: #ef4444; }
+
+    /* 选项 */
+    .opt-col { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .opt-btn {
+      padding: 10px 14px; border-radius: var(--r-sm); border: 1.5px solid var(--border);
+      background: var(--surface); color: var(--text-muted); cursor: pointer;
+      font-size: 13px; text-align: left; transition: all 0.2s;
+    }
+    .opt-btn:hover { border-color: var(--accent); color: var(--text); }
+    .opt-btn.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .opt-btn.ok  { border-color: #10b981; background: rgba(16,185,129,0.1); color: #10b981; }
+    .opt-btn.bad { border-color: #ef4444; background: rgba(239,68,68,0.1); color: #ef4444; }
+
+    /* 公共 */
+    .feedback-card { border-radius: var(--r-md); padding: 16px 20px; display: none; animation: fadeIn 0.3s; }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity:0; transform: translateY(6px); } to { opacity:1; } }
+    .note-box { background: rgba(239,68,68,0.07); border: 1px solid rgba(239,68,68,0.25); border-radius: var(--r-sm); padding: 10px 14px; font-size: 13px; color: var(--text-muted); line-height: 1.7; margin: 8px 0; }
+    .note-box strong { color: var(--accent); }
+  </style>
+</head>
+<body>
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">Redis 高可用演练</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">🛡️</span>
+    <h1 class="game-intro__title">Redis 高可用演练</h1>
+    <p class="game-intro__desc">
+      主节点突然宕机！<br>
+      你作为值班工程师，亲历哨兵发现故障、<br>
+      发起投票、选出新主、完成故障转移的全过程。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 10 分钟</span></div>
+      <div>🎯 <span>5 关</span></div>
+      <div>✦ <span>主从复制 · 哨兵 · 投票 · 故障转移</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开始演练 →</button>
+  </div>
+</div>
+
+<!-- 关1：主从复制架构 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:600px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 1 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">主从复制架构</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">当前架构：1 主 2 从 + 3 个哨兵（Sentinel）。</p>
+      <div class="topo-wrap">
+        <div class="topo-nodes" id="l1-topo">
+          <div class="topo-node master"><div class="node-icon">⭐</div><div class="node-name">Master</div><div class="node-role">主节点</div></div>
+          <div class="conn-line">⟵复制⟶</div>
+          <div class="topo-node slave"><div class="node-icon">🔵</div><div class="node-name">Slave-1</div><div class="node-role">从节点</div></div>
+          <div class="conn-line">⟵复制⟶</div>
+          <div class="topo-node slave"><div class="node-icon">🔵</div><div class="node-name">Slave-2</div><div class="node-role">从节点</div></div>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap;">
+          <div class="topo-node sentinel" style="min-width:70px;padding:8px 12px;"><div class="node-icon" style="font-size:16px;">👁</div><div class="node-name" style="font-size:11px;">Sentinel-1</div></div>
+          <div class="topo-node sentinel" style="min-width:70px;padding:8px 12px;"><div class="node-icon" style="font-size:16px;">👁</div><div class="node-name" style="font-size:11px;">Sentinel-2</div></div>
+          <div class="topo-node sentinel" style="min-width:70px;padding:8px 12px;"><div class="node-icon" style="font-size:16px;">👁</div><div class="node-name" style="font-size:11px;">Sentinel-3</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">关于主从复制，以下哪些说法<strong style="color:var(--text);">正确</strong>？（多选）</p>
+      <div style="display:flex;flex-direction:column;gap:8px;" id="l1-checks">
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch1-1" style="width:16px;height:16px;accent-color:var(--accent);"> 写操作只能发给 Master，Slave 只读
+        </label>
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch1-2" style="width:16px;height:16px;accent-color:var(--accent);"> 从节点复制是同步的，Master 写入后等 Slave 确认才返回
+        </label>
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch1-3" style="width:16px;height:16px;accent-color:var(--accent);"> 从节点复制是异步的，可能存在主从延迟
+        </label>
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch1-4" style="width:16px;height:16px;accent-color:var(--accent);"> 哨兵负责监控、通知、自动故障转移
+        </label>
+      </div>
+      <div style="text-align:center;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL1()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关2：主节点宕机检测 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:600px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 2 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">主节点宕机检测</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        ⚠️ <strong style="color:#ef4444;">Master 突然宕机！</strong><br>
+        点击每个步骤，观察哨兵如何发现并确认故障。
+      </p>
+      <div class="topo-wrap">
+        <div class="topo-nodes">
+          <div class="topo-node master" id="l2-master"><div class="node-icon">⭐</div><div class="node-name">Master</div><div class="node-role" id="l2-m-role">正常运行</div></div>
+          <div class="topo-node slave"><div class="node-icon">🔵</div><div class="node-name">Slave-1</div><div class="node-role">从节点</div></div>
+          <div class="topo-node slave"><div class="node-icon">🔵</div><div class="node-name">Slave-2</div><div class="node-role">从节点</div></div>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap;" id="l2-sentinels">
+          <div class="topo-node sentinel" style="padding:8px 12px;"><div class="node-icon" style="font-size:16px;">👁</div><div class="node-name" style="font-size:11px;" id="s1-state">监控中</div></div>
+          <div class="topo-node sentinel" style="padding:8px 12px;"><div class="node-icon" style="font-size:16px;">👁</div><div class="node-name" style="font-size:11px;" id="s2-state">监控中</div></div>
+          <div class="topo-node sentinel" style="padding:8px 12px;"><div class="node-icon" style="font-size:16px;">👁</div><div class="node-name" style="font-size:11px;" id="s3-state">监控中</div></div>
+        </div>
+      </div>
+      <div class="event-log" id="l2-log">等待事件...</div>
+    </div>
+    <div class="card">
+      <div class="step-btns" id="l2-steps"></div>
+    </div>
+    <div class="feedback-card" id="l2-fb">
+      <div class="feedback-card__verdict" id="l2-vd"></div>
+      <p class="feedback-card__explain" id="l2-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(2)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关3：Sentinel 投票 -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:600px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 3 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">Sentinel 投票</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        确认主观下线（SDOWN）后，Sentinel 发起投票确认客观下线（ODOWN）。<br>
+        <strong style="color:var(--text);">quorum = 2</strong>（至少 2 票才能确认下线）
+      </p>
+      <div class="event-log" id="l3-log">点击"发起投票"开始...</div>
+      <div id="l3-votes" style="margin:10px 0;"></div>
+      <button class="btn btn-primary" id="l3-vote-btn" onclick="doVote()">▶ 发起 ODOWN 投票</button>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">关于 Sentinel 投票机制，以下哪条正确？</p>
+      <div class="opt-col" id="l3-opts">
+        <div class="opt-btn" onclick="pickL3('a',this)">A. 必须所有 Sentinel 都同意才能确认下线</div>
+        <div class="opt-btn" onclick="pickL3('b',this)">B. 超过 quorum 数量的 Sentinel 认为下线，即为客观下线（ODOWN）</div>
+        <div class="opt-btn" onclick="pickL3('c',this)">C. 只要有 1 个 Sentinel 认为下线，就直接执行故障转移</div>
+        <div class="opt-btn" onclick="pickL3('d',this)">D. quorum 必须等于 Sentinel 总数</div>
+      </div>
+      <div id="l3-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL3()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关4：选主策略 -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:600px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 4 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">选主策略</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        ODOWN 确认！现在从 Slave-1 和 Slave-2 中选出新 Master。<br>
+        两个从节点状态如下：
+      </p>
+      <div style="overflow-x:auto;">
+        <table style="border-collapse:collapse;font-size:13px;width:100%;">
+          <tr style="background:var(--surface-alt);">
+            <th style="padding:8px 12px;border:1px solid var(--border);color:var(--accent);">节点</th>
+            <th style="padding:8px 12px;border:1px solid var(--border);color:var(--text-muted);">slave_priority</th>
+            <th style="padding:8px 12px;border:1px solid var(--border);color:var(--text-muted);">复制偏移量 offset</th>
+            <th style="padding:8px 12px;border:1px solid var(--border);color:var(--text-muted);">Run ID（字典序）</th>
+          </tr>
+          <tr>
+            <td style="padding:7px 12px;border:1px solid var(--border);font-weight:700;color:#7c83ff;">Slave-1</td>
+            <td style="padding:7px 12px;border:1px solid var(--border);text-align:center;color:var(--text-muted);">100</td>
+            <td style="padding:7px 12px;border:1px solid var(--border);text-align:center;color:var(--text-muted);">102400</td>
+            <td style="padding:7px 12px;border:1px solid var(--border);color:var(--text-dim);font-size:11px;">3a8e...</td>
+          </tr>
+          <tr>
+            <td style="padding:7px 12px;border:1px solid var(--border);font-weight:700;color:#7c83ff;">Slave-2</td>
+            <td style="padding:7px 12px;border:1px solid var(--border);text-align:center;color:var(--text-muted);">100</td>
+            <td style="padding:7px 12px;border:1px solid var(--border);text-align:center;font-weight:700;color:#10b981;">108920</td>
+            <td style="padding:7px 12px;border:1px solid var(--border);color:var(--text-dim);font-size:11px;">1c2f...</td>
+          </tr>
+        </table>
+      </div>
+      <div style="margin-top:10px;font-size:13px;color:var(--text-muted);">选主顺序：① slave_priority 越小越优先 → ② 复制偏移量越大越优先（数据越新）→ ③ Run ID 字典序越小越优先</div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">哪个从节点会被选为新 Master？</p>
+      <div class="opt-col" id="l4-opts">
+        <div class="opt-btn" onclick="pickL4('1',this)">Slave-1（Run ID 字典序更大）</div>
+        <div class="opt-btn" onclick="pickL4('2',this)">Slave-2（复制偏移量更大，数据更新）</div>
+        <div class="opt-btn" onclick="pickL4('random',this)">随机选一个</div>
+      </div>
+      <div id="l4-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL4()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(4)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关5：故障转移完成 -->
+<div class="screen" id="screen-level-5">
+  <div class="fade-in" style="width:100%;max-width:600px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 5 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">故障转移完成 & 数据一致性</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        Slave-2 已升主，Slave-1 重新指向新 Master，旧 Master 恢复后以从节点身份加入。
+      </p>
+      <div class="topo-wrap">
+        <div class="topo-nodes">
+          <div class="topo-node promoted"><div class="node-icon">⭐</div><div class="node-name">Slave-2</div><div class="node-role">新 Master</div></div>
+          <div class="conn-line">⟵复制⟶</div>
+          <div class="topo-node slave"><div class="node-icon">🔵</div><div class="node-name">Slave-1</div><div class="node-role">从节点</div></div>
+          <div class="conn-line">⟵复制⟶</div>
+          <div class="topo-node slave" style="opacity:0.7;"><div class="node-icon">🔵</div><div class="node-name">旧 Master</div><div class="node-role">恢复为从节点</div></div>
+        </div>
+      </div>
+      <p style="font-size:13px;color:var(--text-muted);margin-top:10px;">主从异步复制存在数据丢失风险，以下场景哪个会导致数据丢失？（多选）</p>
+    </div>
+    <div class="card">
+      <div style="display:flex;flex-direction:column;gap:8px;" id="l5-checks">
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch5-1" style="width:16px;height:16px;accent-color:var(--accent);"> Master 写入一条数据后立刻宕机，Slave 还没同步到
+        </label>
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch5-2" style="width:16px;height:16px;accent-color:var(--accent);"> 网络分区导致 Master 和 Sentinel 失联，旧 Master 继续接受写入，但后来被降级
+        </label>
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch5-3" style="width:16px;height:16px;accent-color:var(--accent);"> Slave 重启后自动追追复制日志，追上主节点
+        </label>
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch5-4" style="width:16px;height:16px;accent-color:var(--accent);"> 正常主从复制过程中读 Slave 可能读到旧数据（主从延迟）
+        </label>
+      </div>
+      <div style="text-align:center;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL5()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l5-fb">
+      <div class="feedback-card__verdict" id="l5-vd"></div>
+      <p class="feedback-card__explain" id="l5-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(5)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">高可用演练完成！</div>
+      <p class="complete-screen__desc">
+        你经历了 Redis Sentinel 的完整故障转移：<br>
+        主从复制 · SDOWN/ODOWN 检测 · 投票机制 ·<br>
+        选主策略 · 数据一致性风险。<br>
+        下次遇到 Redis 高可用问题，你知道该怎么办了。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再玩一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="../../game-utils.js"></script>
+<script>
+const G_TOTAL = 5;
+function startGame() { showScreen('level-1'); TopbarProgress.update({activeIndex:0}); initL2(); initL3(); }
+function completeLevel(n) {
+  TopbarProgress.update({doneUpTo:n, activeIndex:n<G_TOTAL?n:-1});
+  if(n<G_TOTAL) showScreen('level-'+(n+1));
+  else { TopbarProgress.completeAll(); showScreen('complete'); }
+}
+function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+function showFb(prefix, ok, vOk, vBad, exOk, exBad) {
+  const fb=document.getElementById(prefix+'-fb');
+  fb.className='feedback-card '+(ok?'correct':'wrong');
+  document.getElementById(prefix+'-vd').textContent=ok?vOk:vBad;
+  document.getElementById(prefix+'-ex').innerHTML=ok?exOk:exBad;
+  const sub=document.getElementById(prefix+'-submit');
+  if(sub) sub.style.display='none';
+  fb.style.display='block';
+}
+
+/* ── 关1 ── */
+function submitL1() {
+  const c1=document.getElementById('ch1-1').checked;
+  const c2=document.getElementById('ch1-2').checked;
+  const c3=document.getElementById('ch1-3').checked;
+  const c4=document.getElementById('ch1-4').checked;
+  const ok = c1 && !c2 && c3 && c4;
+  showFb('l1', ok, '✓ 判断正确！', '✗ 有误',
+    '主从架构核心：写主读从，异步复制（延迟存在），哨兵负责监控、通知客户端、自动故障转移。',
+    '错误项：② Redis 主从复制默认是<strong>异步</strong>的，不是同步。Master 写入后立即返回给客户端，Slave 异步同步。这是 Redis 高性能的关键，但也是数据丢失风险的来源。');
+}
+
+/* ── 关2：步骤式演示 ── */
+const L2_STEPS = [
+  { btn:'① Sentinel-1 发送 PING，Master 无响应（超过 down-after-milliseconds）', action() {
+    document.getElementById('l2-master').classList.add('down');
+    document.getElementById('l2-m-role').textContent='无响应 ⚠️';
+    document.getElementById('s1-state').textContent='主观下线?';
+    log('l2','<span class="log-warn">[S1] PING Master... 超时！标记为主观下线（SDOWN）</span>');
+  }},
+  { btn:'② Sentinel-1 询问其他 Sentinel：你们能 PING 通 Master 吗？', action() {
+    document.getElementById('s2-state').textContent='SDOWN ✓';
+    document.getElementById('s3-state').textContent='SDOWN ✓';
+    log('l2','<span class="log-warn">[S2] 也无法 PING 通 Master，确认 SDOWN</span>\n<span class="log-warn">[S3] 也无法 PING 通 Master，确认 SDOWN</span>');
+  }},
+  { btn:'③ 满足 quorum（2票），确认客观下线（ODOWN）', action() {
+    document.getElementById('l2-master').style.outline='2px solid #ef4444';
+    document.getElementById('s1-state').textContent='ODOWN 触发!';
+    log('l2','<span class="log-err">[S1] 票数 ≥ quorum(2)，确认 Master 客观下线（ODOWN）</span>\n<span class="log-info">→ 开始故障转移流程...</span>');
+    setTimeout(() => {
+      const fb=document.getElementById('l2-fb');
+      fb.className='feedback-card correct';
+      fb.style.display='block';
+      document.getElementById('l2-vd').textContent='✓ 下线检测流程完整！';
+      document.getElementById('l2-ex').innerHTML='检测流程：单个 Sentinel 发现超时 → <strong>主观下线（SDOWN）</strong> → 通知其他 Sentinel 投票 → 超过 quorum 数量同意 → <strong>客观下线（ODOWN）</strong> → 触发故障转移。两阶段设计避免网络抖动导致的误判。';
+    }, 800);
+  }},
+];
+let L2_step=0;
+function initL2() {
+  L2_step=0;
+  document.getElementById('l2-steps').innerHTML = L2_STEPS.map((s,i)=>`
+    <button class="btn ${i===0?'btn-primary':'btn-ghost'}" id="l2s-${i}"
+      style="font-size:13px;text-align:left;padding:10px 16px;${i>0?'opacity:0.4;cursor:not-allowed;':''}"
+      onclick="execL2Step(${i})">${s.btn}</button>`).join('');
+}
+function execL2Step(i) {
+  if(i!==L2_step) return;
+  L2_STEPS[i].action();
+  document.getElementById('l2s-'+i).style.opacity='0.5';
+  document.getElementById('l2s-'+i).style.cursor='default';
+  L2_step++;
+  if(L2_step<L2_STEPS.length) {
+    const next=document.getElementById('l2s-'+L2_step);
+    next.style.opacity='1'; next.style.cursor='pointer';
+    next.className='btn btn-primary';
+    next.style.cssText+='font-size:13px;text-align:left;padding:10px 16px;';
+  }
+}
+function log(id, html) { document.getElementById(id+'-log').innerHTML=html; }
+
+/* ── 关3：投票动画 ── */
+let L3_voted=false, L3_picked=null;
+function initL3() { L3_voted=false; }
+function doVote() {
+  if(L3_voted) return;
+  L3_voted=true;
+  document.getElementById('l3-vote-btn').style.display='none';
+  const votes=[{name:'Sentinel-1',yes:true},{name:'Sentinel-2',yes:true},{name:'Sentinel-3',yes:false}];
+  let html='';
+  votes.forEach((v,i)=>{
+    html+=`<div class="vote-bar"><div class="vote-label">${v.name}</div>
+      <div class="vote-track"><div class="vote-fill ${v.yes?'vote-yes':'vote-no'}" id="vf-${i}" style="width:0%">${v.yes?'是':'否'}</div></div>
+    </div>`;
+  });
+  document.getElementById('l3-votes').innerHTML=html;
+  votes.forEach((v,i) => {
+    setTimeout(()=>{ document.getElementById('vf-'+i).style.width='100%'; },i*300+200);
+  });
+  setTimeout(()=>{
+    document.getElementById('l3-log').innerHTML='<span class="log-ok">投票结果：2 票同意（≥ quorum=2）→ 确认 ODOWN ✓</span>';
+    document.getElementById('l3-submit').style.display='block';
+  }, 1200);
+}
+function pickL3(v,el) {
+  L3_picked=v;
+  document.querySelectorAll('#l3-opts .opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+}
+function submitL3() {
+  const ok=L3_picked==='b';
+  document.querySelectorAll('#l3-opts .opt-btn').forEach(b=>{
+    const v=b.onclick.toString().match(/'([^']+)'/)?.[1];
+    if(v==='b') b.classList.add('ok');
+    else if(v===L3_picked&&!ok) b.classList.add('bad');
+  });
+  showFb('l3',ok,'✓ 正确！','✗ 答错了',
+    '<strong>quorum</strong> 是最小同意票数，不需要全体同意。3 个 Sentinel 配置 quorum=2，只需 2 个同意即可确认 ODOWN。这个设计防止单 Sentinel 误判导致的假故障转移。',
+    '答案 B：超过 quorum 数量同意即可。quorum 一般设为 Sentinel 数量的多数（如 3 个设 quorum=2），不需要全体同意，也不能只要 1 个同意。');
+}
+
+/* ── 关4 ── */
+let L4_picked=null;
+function pickL4(v,el){
+  L4_picked=v;
+  document.querySelectorAll('#l4-opts .opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l4-submit').style.display='block';
+}
+function submitL4(){
+  const ok=L4_picked==='2';
+  document.querySelectorAll('#l4-opts .opt-btn').forEach(b=>{
+    const v=b.onclick.toString().match(/'([^']+)'/)?.[1];
+    if(v==='2') b.classList.add('ok');
+    else if(v===L4_picked&&!ok) b.classList.add('bad');
+  });
+  showFb('l4',ok,'✓ 选主正确！','✗ 答错了',
+    '<strong>Slave-2 被选为新 Master。</strong>选主优先级：① slave_priority（越小越优先，两者相同）→ ② 复制偏移量（Slave-2 的 108920 > Slave-1 的 102400，数据更新）→ ③ Run ID（作为最后的平局决胜）。数据最新的从节点优先成为主节点，减少数据丢失。',
+    '答案：<strong>Slave-2</strong>。priority 相同时，比较复制偏移量——偏移量越大说明从主节点同步的数据越多，Slave-2 偏移量 108920 > Slave-1 的 102400，所以 Slave-2 被选为新主。');
+}
+
+/* ── 关5 ── */
+function submitL5(){
+  const c1=document.getElementById('ch5-1').checked;
+  const c2=document.getElementById('ch5-2').checked;
+  const c3=document.getElementById('ch5-3').checked;
+  const c4=document.getElementById('ch5-4').checked;
+  const ok=c1&&c2&&!c3&&c4;
+  showFb('l5',ok,'✓ 判断正确！','✗ 有误',
+    '①✅ 异步复制 + Master 宕机 → 未同步数据丢失。②✅ 脑裂（brain-split）问题：旧 Master 在分区内继续写入，被降级后这些数据丢失。③❌ Slave 重启追复制日志是正常恢复，不丢数据。④✅ 主从延迟导致读从节点可能读到旧数据，但不算"丢失"，属于一致性问题。',
+    '①② 是真正的数据丢失风险。④ 是一致性问题（旧数据）而不是丢失。③ Slave 自动追日志是正常机制，不丢数据。');
+}
+</script>
+</body>
+</html>

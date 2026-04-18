@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GMP 调度模拟器 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root {
+      --accent:     #00d4ff;
+      --accent-dim: rgba(0, 212, 255, 0.2);
+    }
+
+    /* ── 关1：拖拽标签 ── */
+    .drag-chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+    .chip {
+      padding: 8px 18px; border-radius: 20px; font-size: 14px; font-weight: 800;
+      cursor: grab; border: 2px solid; user-select: none; transition: all 0.2s;
+    }
+    .chip:active { cursor: grabbing; transform: scale(1.05); }
+    .chip-G { color: #10b981; border-color: #10b981; background: rgba(16,185,129,0.1); }
+    .chip-M { color: #f59e0b; border-color: #f59e0b; background: rgba(245,158,11,0.1); }
+    .chip-P { color: #a78bfa; border-color: #a78bfa; background: rgba(167,139,250,0.1); }
+
+    .def-box {
+      min-height: 48px; padding: 10px 14px;
+      border: 2px dashed var(--border); border-radius: var(--r-md);
+      display: flex; align-items: center; gap: 8px;
+      transition: border-color 0.2s; margin: 6px 0;
+      position: relative;
+    }
+    .def-box.over { border-color: var(--accent); border-style: solid; }
+    .def-box.placed { border-style: solid; }
+    .def-box.correct { border-color: #10b981; }
+    .def-box.wrong   { border-color: #ef4444; }
+    .def-label { font-size: 13px; color: var(--text-muted); }
+
+    /* ── 关2：调度可视化 ── */
+    .scheduler-layout {
+      display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+    }
+    .p-column {
+      background: var(--surface-alt); border: 1.5px solid var(--border);
+      border-radius: var(--r-md); padding: 12px; min-width: 120px; flex: 1;
+    }
+    .p-title {
+      font-size: 11px; font-weight: 700; color: #a78bfa;
+      text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; text-align: center;
+    }
+    .p-local-q { display: flex; flex-direction: column; gap: 4px; min-height: 60px; }
+    .g-chip {
+      padding: 6px 10px; border-radius: 6px;
+      background: rgba(16,185,129,0.15); border: 1.5px solid #10b981;
+      color: #10b981; font-size: 12px; font-weight: 700; text-align: center;
+      cursor: pointer; transition: all 0.2s; user-select: none;
+    }
+    .g-chip:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(16,185,129,0.3); }
+    .g-chip.running  { background: rgba(0,212,255,0.15); border-color: #00d4ff; color: #00d4ff; }
+    .g-chip.done     { background: rgba(75,85,99,0.2);   border-color: #374151; color: #6b7280; cursor: default; }
+    .g-chip.stealing { animation: fly 0.5s ease-out; }
+    @keyframes fly {
+      0%   { transform: translateX(0) scale(1); opacity: 1; }
+      50%  { transform: translateX(30px) scale(0.8); opacity: 0.5; }
+      100% { transform: translateX(0) scale(1); opacity: 1; }
+    }
+
+    .m-box {
+      margin-top: 8px; padding: 6px;
+      background: rgba(245,158,11,0.1); border: 1.5px solid #f59e0b;
+      border-radius: 6px; font-size: 11px; color: #f59e0b;
+      text-align: center; min-height: 32px;
+    }
+    .global-q {
+      background: var(--surface-alt); border: 1.5px solid var(--border);
+      border-radius: var(--r-md); padding: 12px; margin-top: 10px;
+    }
+    .gq-title { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; }
+    .gq-chips { display: flex; gap: 4px; flex-wrap: wrap; min-height: 30px; }
+
+    /* ── 关3：Work Stealing 动画 ── */
+    .steal-arena {
+      display: flex; gap: 16px; align-items: flex-start; justify-content: center; flex-wrap: wrap;
+    }
+    .p-card {
+      background: var(--surface-alt); border: 2px solid var(--border);
+      border-radius: var(--r-md); padding: 14px; min-width: 110px; text-align: center;
+      transition: border-color 0.3s;
+    }
+    .p-card.stealing { border-color: var(--accent); box-shadow: 0 0 12px var(--accent-dim); }
+    .p-card.victim   { border-color: #f59e0b; }
+    .steal-g {
+      padding: 5px 10px; margin: 3px; border-radius: 5px;
+      font-size: 12px; font-weight: 700; display: inline-block;
+      background: rgba(16,185,129,0.15); border: 1px solid #10b981; color: #10b981;
+      transition: all 0.4s;
+    }
+    .steal-g.flying {
+      background: rgba(0,212,255,0.2); border-color: #00d4ff; color: #00d4ff;
+      animation: chip-fly 0.6s ease-out;
+    }
+    @keyframes chip-fly {
+      0%   { transform: scale(1); opacity: 1; }
+      40%  { transform: scale(1.2) translateY(-8px); opacity: 0.7; }
+      100% { transform: scale(1) translateY(0); opacity: 1; }
+    }
+
+    /* ── 关4：Hand Off ── */
+    .handoff-scene {
+      display: flex; gap: 16px; align-items: center; justify-content: center;
+      flex-wrap: wrap; margin: 12px 0;
+    }
+    .ho-box {
+      background: var(--surface-alt); border: 2px solid var(--border);
+      border-radius: var(--r-md); padding: 16px; text-align: center; min-width: 100px;
+      transition: all 0.4s;
+    }
+    .ho-box.blocked  { border-color: #ef4444; opacity: 0.6; }
+    .ho-box.active   { border-color: var(--accent); box-shadow: 0 0 14px var(--accent-dim); }
+    .ho-box.freed    { border-color: #10b981; }
+    .ho-arrow { font-size: 20px; color: var(--text-dim); }
+
+    /* ── 关5：G0/M0 填空 ── */
+    .fillblank { display: flex; flex-direction: column; gap: 10px; }
+    .fb-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; background: var(--surface-alt);
+      border: 1.5px solid var(--border); border-radius: var(--r-sm);
+      font-size: 13px; color: var(--text-muted);
+    }
+    .fb-row.correct { border-color: #10b981; }
+    .fb-row.wrong   { border-color: #ef4444; }
+    .blank {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 80px; padding: 4px 10px;
+      border-bottom: 2px solid var(--border-light); border-radius: 4px;
+      background: var(--surface); cursor: pointer; font-size: 13px;
+      color: var(--text-dim); transition: all 0.2s;
+    }
+    .blank.filled { color: var(--accent); border-color: var(--accent); }
+    .blank.ok     { color: #10b981; border-color: #10b981; }
+    .blank.bad    { color: #ef4444; border-color: #ef4444; }
+    .word-bank { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+    .word-chip {
+      padding: 5px 12px; border-radius: 16px;
+      border: 1.5px solid var(--border); background: var(--surface);
+      color: var(--text-muted); cursor: pointer; font-size: 13px; transition: all 0.2s;
+    }
+    .word-chip:hover { border-color: var(--accent); color: var(--text); }
+    .word-chip.used  { opacity: 0.35; cursor: default; pointer-events: none; }
+
+    /* ── 公共 ── */
+    .feedback-card {
+      border-radius: var(--r-md); padding: 16px 20px;
+      display: none; animation: fadeIn 0.3s ease;
+    }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+
+    .note-box {
+      background: rgba(0,212,255,0.07); border: 1px solid rgba(0,212,255,0.25);
+      border-radius: var(--r-sm); padding: 10px 14px;
+      font-size: 13px; color: var(--text-muted); line-height: 1.7; margin: 8px 0;
+    }
+    .note-box strong { color: var(--accent); }
+  </style>
+</head>
+<body>
+
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">GMP 调度模拟器</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">⚙️</span>
+    <h1 class="game-intro__title">GMP 调度模拟器</h1>
+    <p class="game-intro__desc">
+      你就是 Go 运行时调度器。<br>
+      亲手把 G 分配给 P、触发 Work Stealing、处理系统调用阻塞，<br>
+      5 关彻底理解 GMP 调度模型。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 10 分钟</span></div>
+      <div>🎯 <span>5 关</span></div>
+      <div>✦ <span>GMP · Work Stealing · Hand Off · G0/M0</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开始调度 →</button>
+  </div>
+</div>
+
+
+<!-- 关1：G/M/P 角色认知 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:560px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 1 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">G / M / P 是什么？</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        Go 调度器由三种实体组成。把右边的标签拖到对应的定义框中：
+      </p>
+      <div class="drag-chips" id="l1-chips">
+        <div class="chip chip-G" draggable="true" id="chip-G" ondragstart="onDragStart('G')">G</div>
+        <div class="chip chip-M" draggable="true" id="chip-M" ondragstart="onDragStart('M')">M</div>
+        <div class="chip chip-P" draggable="true" id="chip-P" ondragstart="onDragStart('P')">P</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="def-box" id="drop-G" ondragover="onDragOver(event)" ondrop="onDrop(event,'G')">
+        <div class="def-label"><strong style="color:#e0e0e0;">Goroutine</strong> — 用户态轻量线程，创建成本极低（初始栈 ~2KB），Go 程序的并发执行单元</div>
+      </div>
+      <div class="def-box" id="drop-M" ondragover="onDragOver(event)" ondrop="onDrop(event,'M')">
+        <div class="def-label"><strong style="color:#e0e0e0;">Machine / OS Thread</strong> — 操作系统线程，由 OS 调度，数量通常等于 CPU 核数</div>
+      </div>
+      <div class="def-box" id="drop-P" ondragover="onDragOver(event)" ondrop="onDrop(event,'P')">
+        <div class="def-label"><strong style="color:#e0e0e0;">Processor / 逻辑处理器</strong> — 持有本地 G 队列 + 调度上下文，M 需绑定 P 才能执行 G</div>
+      </div>
+    </div>
+    <div id="l1-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL1()">提交</button>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div class="note-box">
+        <strong>核心关系：</strong>M 必须绑定 P 才能执行 G。<br>
+        GOMAXPROCS 控制 P 的数量（默认=CPU 核数），决定最大并行度。<br>
+        G 的数量可以远远多于 M/P 数量，这就是 Go 高并发的基础。
+      </div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关2：正常调度 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:620px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 2 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">正常调度</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        3 个 P 各有本地队列，还有一个全局队列。<br>
+        点击 G 让对应 P 的 M 取出并执行它（变蓝），执行完后变灰。
+      </p>
+      <div class="note-box">
+        调度顺序：先找本地队列（LRQ）→ 偶尔轮询全局队列（GRQ）→ 再 Work Steal。
+      </div>
+    </div>
+    <div class="card">
+      <div class="scheduler-layout" id="l2-layout"></div>
+      <div class="global-q">
+        <div class="gq-title">🌐 全局队列 GRQ</div>
+        <div class="gq-chips" id="l2-grq"></div>
+      </div>
+      <div id="l2-log" style="font-size:12px;color:var(--text-dim);margin-top:8px;min-height:24px;"></div>
+    </div>
+    <div id="l2-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="completeLevel(2)">全部执行完毕 →</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关3：Work Stealing -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:600px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 3 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">Work Stealing</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        P0 的本地队列已空，需要偷取其他 P 的任务。<br>
+        先判断该从哪个 P 偷、偷多少个，再点击"执行偷取"观察动画。
+      </p>
+    </div>
+    <div class="card">
+      <div class="steal-arena" id="l3-arena"></div>
+      <div style="margin-top:14px;">
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">Work Stealing 规则：从<strong style="color:var(--text);">队列最长</strong>的 P 尾部偷取<strong style="color:var(--text);">一半</strong>的 G。P0 应该偷哪个 P？偷几个？</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <div>
+            <p style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">从哪个 P 偷？</p>
+            <div style="display:flex;gap:6px;" id="l3-from">
+              <button class="word-chip" onclick="pickStealFrom('P1',this)">P1</button>
+              <button class="word-chip" onclick="pickStealFrom('P2',this)">P2</button>
+              <button class="word-chip" onclick="pickStealFrom('P3',this)">P3</button>
+            </div>
+          </div>
+          <div>
+            <p style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">偷几个？</p>
+            <div style="display:flex;gap:6px;" id="l3-count">
+              <button class="word-chip" onclick="pickStealCount(1,this)">1 个</button>
+              <button class="word-chip" onclick="pickStealCount(2,this)">2 个</button>
+              <button class="word-chip" onclick="pickStealCount(3,this)">3 个</button>
+              <button class="word-chip" onclick="pickStealCount(4,this)">4 个</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="l3-go" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="doSteal()">▶ 执行偷取</button>
+      </div>
+      <div id="l3-log" style="font-size:12px;color:var(--text-dim);margin-top:8px;min-height:24px;"></div>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关4：系统调用阻塞 Hand Off -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:560px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 4 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">系统调用阻塞 → Hand Off</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        M0 正在执行 G3，G3 发起了系统调用（syscall），可能阻塞很久。<br>
+        点击每个步骤，观察调度器如何通过 <strong style="color:var(--text);">Hand Off</strong> 保持并行度。
+      </p>
+    </div>
+    <div class="card">
+      <div class="handoff-scene" id="l4-scene">
+        <div class="ho-box active" id="ho-P0">
+          <div style="font-size:11px;color:#a78bfa;margin-bottom:4px;">P0</div>
+          <div style="font-size:12px;color:var(--text-muted);">已绑定 M0</div>
+          <div style="font-size:11px;margin-top:4px;color:#10b981;" id="ho-P0-g">执行中: G3</div>
+        </div>
+        <div class="ho-box" id="ho-M0" style="min-width:80px;">
+          <div style="font-size:11px;color:#f59e0b;margin-bottom:4px;">M0</div>
+          <div style="font-size:12px;color:var(--text-muted);" id="ho-M0-state">正常</div>
+        </div>
+        <div class="ho-box" id="ho-M1" style="opacity:0.3;min-width:80px;">
+          <div style="font-size:11px;color:#f59e0b;margin-bottom:4px;">M1（新）</div>
+          <div style="font-size:12px;color:var(--text-muted);">待机</div>
+        </div>
+        <div class="ho-box" id="ho-sleep" style="opacity:0.3;min-width:80px;">
+          <div style="font-size:11px;color:#6b7280;margin-bottom:4px;">休眠 Pool</div>
+          <div style="font-size:12px;color:var(--text-muted);">-</div>
+        </div>
+      </div>
+      <div id="l4-log" style="font-size:12px;color:var(--text-dim);margin:8px 0;min-height:32px;line-height:1.7;"></div>
+      <div id="l4-steps" style="display:flex;flex-direction:column;gap:8px;"></div>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(4)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关5：G0/M0 特殊角色 -->
+<div class="screen" id="screen-level-5">
+  <div class="fade-in" style="width:100%;max-width:560px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 5 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">G0 / M0 特殊角色</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        Go 运行时有两个特殊的"特权成员"：G0 和 M0。<br>
+        从词语库中选词，填入正确的空格。
+      </p>
+    </div>
+    <div class="card">
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">词语库（点击词语，再点击空格填入）：</p>
+      <div class="word-bank" id="l5-bank"></div>
+      <div style="height:1px;background:var(--border);margin:12px 0;"></div>
+      <div class="fillblank" id="l5-blanks"></div>
+    </div>
+    <div id="l5-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL5()">提交</button>
+    </div>
+    <div class="feedback-card" id="l5-fb">
+      <div class="feedback-card__verdict" id="l5-vd"></div>
+      <p class="feedback-card__explain" id="l5-ex"></p>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(5)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">调度完成！</div>
+      <p class="complete-screen__desc">
+        你已掌握 GMP 调度模型的全部核心机制：<br>
+        G/M/P 三角关系 · 本地&全局队列 ·<br>
+        Work Stealing · Hand Off · G0/M0 特殊职责。<br>
+        这些是 Go 高并发底层的真正秘密。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再玩一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script src="../../game-utils.js"></script>
+<script>
+const G_TOTAL = 5;
+function startGame() { showScreen('level-1'); TopbarProgress.update({ activeIndex: 0 }); }
+function completeLevel(n) {
+  TopbarProgress.update({ doneUpTo: n, activeIndex: n < G_TOTAL ? n : -1 });
+  if (n < G_TOTAL) {
+    showScreen('level-' + (n + 1));
+    if (n + 1 === 2) initL2();
+    if (n + 1 === 3) initL3();
+    if (n + 1 === 4) initL4();
+    if (n + 1 === 5) initL5();
+  } else {
+    TopbarProgress.completeAll();
+    showScreen('complete');
+  }
+}
+function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+function showFb(prefix, ok, vOk, vBad, exOk, exBad) {
+  const fb = document.getElementById(prefix + '-fb');
+  fb.className = 'feedback-card ' + (ok ? 'correct' : 'wrong');
+  document.getElementById(prefix + '-vd').textContent = ok ? vOk : vBad;
+  document.getElementById(prefix + '-ex').innerHTML = ok ? exOk : exBad;
+  const sub = document.getElementById(prefix.replace('fb','submit') + '');
+  // hide submit if it exists
+  ['l1-submit','l3-submit','l5-submit'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  fb.style.display = 'block';
+}
+
+/* ── 关1：拖拽 ── */
+let dragging = null;
+const L1_placed = {};
+const L1_correct = { G: 'G', M: 'M', P: 'P' };
+
+function onDragStart(id) { dragging = id; }
+function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('over'); }
+function onDrop(e, expected) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('over');
+  if (!dragging) return;
+  const chipEl = document.getElementById('chip-' + dragging);
+  if (!chipEl) return;
+  // Remove from previous drop if any
+  Object.entries(L1_placed).forEach(([k, v]) => {
+    if (v === dragging) {
+      delete L1_placed[k];
+      const prev = document.getElementById('drop-' + k);
+      const existing = prev.querySelector('.chip');
+      if (existing) existing.remove();
+    }
+  });
+  L1_placed[expected] = dragging;
+  const clone = chipEl.cloneNode(true);
+  clone.removeAttribute('draggable');
+  clone.style.cursor = 'default';
+  e.currentTarget.prepend(clone);
+  e.currentTarget.classList.add('placed');
+  dragging = null;
+  const allPlaced = Object.keys(L1_placed).length === 3;
+  document.getElementById('l1-submit').style.display = allPlaced ? 'block' : 'none';
+}
+
+function submitL1() {
+  let wrong = 0;
+  ['G','M','P'].forEach(id => {
+    const box = document.getElementById('drop-' + id);
+    const placed = L1_placed[id];
+    if (placed === id) box.classList.add('correct');
+    else { box.classList.add('wrong'); wrong++; }
+  });
+  const ok = wrong === 0;
+  showFb('l1', ok, '✓ 全部匹配正确！', `✗ 有 ${wrong} 处错误`,
+    'G（Goroutine）= 执行单元，M（Machine）= OS 线程，P（Processor）= 逻辑处理器。M 绑定 P 才能运行 G，这是 GMP 的核心约束。',
+    '记住：G 是要执行的任务，M 是执行任务的线程，P 是让 M 能执行 G 的"执照"（持有调度上下文和本地队列）。');
+}
+
+/* ── 关2：正常调度 ── */
+const L2_DATA = {
+  P0: ['G1','G2','G3'], P1: ['G4','G5'], P2: ['G6'],
+  GRQ: ['G7','G8'],
+};
+const L2_STATE = { running: {}, done: new Set() };
+let L2_totalG = 0;
+
+function initL2() {
+  L2_totalG = 0;
+  Object.values(L2_DATA).forEach(arr => L2_totalG += arr.length);
+  const layout = document.getElementById('l2-layout');
+  layout.innerHTML = ['P0','P1','P2'].map(p => `
+    <div class="p-column">
+      <div class="p-title">⚙ ${p}</div>
+      <div class="p-local-q" id="lrq-${p}">
+        ${L2_DATA[p].map(g => `<div class="g-chip" onclick="runG('${g}','${p}')">${g}</div>`).join('')}
+      </div>
+      <div class="m-box" id="m-${p}">M: 空闲</div>
+    </div>`).join('');
+  const grq = document.getElementById('l2-grq');
+  grq.innerHTML = L2_DATA.GRQ.map(g =>
+    `<div class="g-chip" onclick="runG('${g}','GRQ')" id="grq-${g}">${g}</div>`).join('');
+}
+
+function runG(gid, source) {
+  const el = document.getElementById('g-' + gid) || document.querySelector(`[onclick="runG('${gid}','${source}')"]`);
+  if (!el || el.classList.contains('done') || el.classList.contains('running')) return;
+  const p = source === 'GRQ' ? 'P0' : source; // GRQ goes to first free P
+  el.classList.add('running'); el.textContent = gid + ' ▶';
+  document.getElementById('m-' + p).textContent = `M: 执行 ${gid}`;
+  document.getElementById('l2-log').textContent = `${p} 的 M 正在执行 ${gid}`;
+  setTimeout(() => {
+    el.classList.remove('running'); el.classList.add('done');
+    el.textContent = gid + ' ✓'; el.onclick = null;
+    document.getElementById('m-' + p).textContent = 'M: 空闲';
+    L2_STATE.done.add(gid);
+    if (L2_STATE.done.size === L2_totalG) {
+      document.getElementById('l2-log').textContent = '✓ 所有 G 都执行完毕！';
+      document.getElementById('l2-submit').style.display = 'block';
+    }
+  }, 600);
+}
+
+/* ── 关3：Work Stealing ── */
+const L3_DATA = {
+  P0: [],
+  P1: ['G1','G2','G3','G4'],
+  P2: ['G5','G6'],
+  P3: ['G7','G8','G9','G10','G11','G12'],
+};
+let L3_from = null, L3_count = null;
+let L3_stolen = false;
+
+function initL3() {
+  L3_from = null; L3_count = null; L3_stolen = false;
+  const arena = document.getElementById('l3-arena');
+  arena.innerHTML = Object.entries(L3_DATA).map(([p, gs]) => `
+    <div class="p-card ${p === 'P0' ? 'stealing' : ''}" id="pc-${p}">
+      <div style="font-size:12px;font-weight:700;color:${p==='P0'?'var(--accent)':'#a78bfa'};margin-bottom:6px;">${p} ${p==='P0'?'（空）':''}</div>
+      <div id="sc-${p}">${gs.map(g => `<div class="steal-g" id="sg-${g}">${g}</div>`).join('')}
+      ${gs.length === 0 ? '<div style="font-size:11px;color:var(--text-dim);">队列空</div>' : ''}
+      </div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">共 ${gs.length} 个</div>
+    </div>`).join('');
+}
+
+function pickStealFrom(p, el) {
+  L3_from = p;
+  document.querySelectorAll('#l3-from .word-chip').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  checkL3Ready();
+}
+function pickStealCount(n, el) {
+  L3_count = n;
+  document.querySelectorAll('#l3-count .word-chip').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  checkL3Ready();
+}
+function checkL3Ready() {
+  if (L3_from && L3_count) document.getElementById('l3-go').style.display = 'block';
+}
+
+function doSteal() {
+  // Correct: steal from P3 (6 items), take half = 3
+  const correctFrom = 'P3';
+  const correctCount = 3;
+  const ok = L3_from === correctFrom && L3_count === correctCount;
+
+  // Animate regardless
+  const victimGs = [...L3_DATA[L3_from]];
+  const half = Math.ceil(victimGs.length / 2);
+  const toSteal = victimGs.slice(-half); // steal from tail
+
+  document.getElementById('l3-log').textContent = `从 ${L3_from} 尾部偷取 ${toSteal.length} 个 G...`;
+  document.getElementById('pc-' + L3_from).classList.add('victim');
+
+  toSteal.forEach((g, i) => {
+    setTimeout(() => {
+      const el = document.getElementById('sg-' + g);
+      if (el) { el.classList.add('flying'); el.textContent += ' →P0'; }
+      if (i === toSteal.length - 1) {
+        setTimeout(() => {
+          const p0 = document.getElementById('sc-P0');
+          toSteal.forEach(g2 => {
+            const existEl = document.getElementById('sg-' + g2);
+            if (existEl) existEl.remove();
+            const newEl = document.createElement('div');
+            newEl.className = 'steal-g';
+            newEl.textContent = g2;
+            p0.appendChild(newEl);
+          });
+          document.getElementById('l3-log').textContent = `偷取完成！P0 获得 ${toSteal.length} 个 G`;
+          showFb('l3', ok, '✓ 判断正确！', '✗ 判断有误',
+            `从队列最长的 ${correctFrom}（${L3_DATA[correctFrom].length} 个）偷取尾部一半（${correctCount} 个）。Work Stealing 保证了 P 不会闲着，最大化 CPU 利用率。`,
+            `正确答案：从 <strong>${correctFrom}</strong>（队列最长，${L3_DATA[correctFrom].length} 个）偷取尾部 <strong>${correctCount}</strong> 个（一半）。记住：偷最多的，偷一半，从尾部偷（减少锁竞争）。`);
+        }, 500);
+      }
+    }, i * 200);
+  });
+}
+
+/* ── 关4：Hand Off ── */
+const L4_STEPS = [
+  { btn: '① G3 发起系统调用（syscall）', action: () => {
+    document.getElementById('ho-M0-state').textContent = '阻塞中';
+    document.getElementById('ho-M0').classList.add('blocked');
+    document.getElementById('l4-log').innerHTML = 'M0 陷入系统调用，可能阻塞很久。P0 不能干等，需要解绑。';
+  }},
+  { btn: '② P0 与 M0 解绑（Hand Off）', action: () => {
+    document.getElementById('ho-P0').classList.remove('active');
+    document.getElementById('ho-P0-g').textContent = '等待新 M 绑定';
+    document.getElementById('l4-log').innerHTML = '<strong style="color:var(--accent)">Hand Off</strong>：P0 从 M0 上脱离，带着其他 G 继续找新的 M 绑定。';
+  }},
+  { btn: '③ 从休眠池取出 M1 绑定 P0', action: () => {
+    document.getElementById('ho-M1').style.opacity = '1';
+    document.getElementById('ho-M1').classList.add('active');
+    document.getElementById('ho-P0').classList.add('active');
+    document.getElementById('ho-P0-g').textContent = 'M1 执行队列其余 G';
+    document.getElementById('ho-sleep').style.opacity = '0.3';
+    document.getElementById('l4-log').innerHTML = 'M1 从休眠池唤醒，绑定 P0，继续执行队列中其余 G。此时 M0 仍在等待 syscall 返回，并行度不受影响！';
+  }},
+  { btn: '④ G3 syscall 返回，M0 尝试绑定 P', action: () => {
+    document.getElementById('ho-M0').classList.remove('blocked');
+    document.getElementById('ho-M0-state').textContent = '找空闲 P';
+    document.getElementById('l4-log').innerHTML = 'M0 完成 syscall，但 P0 已被 M1 绑定。M0 尝试偷一个空闲 P，若没有则把 G3 放入全局队列，自己进入休眠池。';
+    setTimeout(() => {
+      document.getElementById('ho-M0-state').textContent = '进入休眠';
+      document.getElementById('ho-M0').style.opacity = '0.5';
+      document.getElementById('ho-sleep').style.opacity = '1';
+      document.getElementById('l4-log').innerHTML += '<br>→ 无空闲 P，M0 休眠，G3 进全局队列等待调度。';
+      document.getElementById('l4-fb').style.display = 'block';
+      document.getElementById('l4-fb').className = 'feedback-card correct';
+      document.getElementById('l4-vd').textContent = '✓ Hand Off 流程完整！';
+      document.getElementById('l4-ex').innerHTML = 'Hand Off 的核心：<strong>让 P 不因 syscall 而闲置</strong>。M 陷入 syscall 时，P 迅速换绑新 M，保持最大并行度。这就是 Go 在高并发下 CPU 利用率高的原因之一。';
+    }, 800);
+  }},
+];
+let L4_step = 0;
+
+function initL4() {
+  L4_step = 0;
+  const container = document.getElementById('l4-steps');
+  container.innerHTML = L4_STEPS.map((s, i) => `
+    <button class="btn ${i === 0 ? 'btn-primary' : 'btn-ghost'}" id="l4s-${i}"
+      style="font-size:13px;text-align:left;padding:10px 16px;${i > 0 ? 'opacity:0.4;cursor:not-allowed;' : ''}"
+      onclick="execL4Step(${i})">${s.btn}</button>`).join('');
+}
+
+function execL4Step(i) {
+  if (i !== L4_step) return;
+  L4_STEPS[i].action();
+  document.getElementById('l4s-' + i).style.opacity = '0.5';
+  document.getElementById('l4s-' + i).style.cursor = 'default';
+  L4_step++;
+  if (L4_step < L4_STEPS.length) {
+    const next = document.getElementById('l4s-' + L4_step);
+    next.style.opacity = '1'; next.style.cursor = 'pointer';
+    next.className = 'btn btn-primary';
+    next.style.textAlign = 'left'; next.style.padding = '10px 16px'; next.style.fontSize = '13px';
+  }
+}
+
+/* ── 关5：G0/M0 填空 ── */
+const L5_SENTENCES = [
+  { text: 'G0 是每个 M 都有的特殊 goroutine，不执行用户代码，专门负责执行', blank: 0, ans: '调度逻辑' },
+  { text: 'G0 负责 goroutine 的创建、销毁和', blank: 0, ans: 'goroutine 切换' },
+  { text: 'M0 是程序启动时创建的第一个 OS 线程，负责执行', blank: 0, ans: '初始化和启动主 goroutine' },
+  { text: 'G0 的栈不需要动态伸缩，它运行在', blank: 0, ans: '固定大小的系统栈' },
+  { text: '普通 G 的创建成本极低，初始栈大小约为', blank: 0, ans: '2KB ~ 8KB' },
+];
+const L5_WORDS = ['调度逻辑', 'goroutine 切换', '初始化和启动主 goroutine', '固定大小的系统栈', '2KB ~ 8KB'];
+const L5_STATE = {};
+let L5_selectedWord = null;
+
+function initL5() {
+  L5_SENTENCES.forEach((_, i) => L5_STATE[i] = null);
+  L5_selectedWord = null;
+  document.getElementById('l5-bank').innerHTML = L5_WORDS.map((w, i) =>
+    `<div class="word-chip" id="wc-${i}" onclick="selectWord('${w}',${i})">${w}</div>`).join('');
+  document.getElementById('l5-blanks').innerHTML = L5_SENTENCES.map((s, i) => `
+    <div class="fb-row" id="fbrow-${i}">
+      <span>${s.text}</span>
+      <span class="blank" id="blank-${i}" onclick="fillBlank(${i})">___</span>
+    </div>`).join('');
+}
+
+function selectWord(word, idx) {
+  L5_selectedWord = word;
+  document.querySelectorAll('#l5-bank .word-chip').forEach(c => c.classList.remove('sel'));
+  document.getElementById('wc-' + idx).classList.add('sel');
+}
+
+function fillBlank(i) {
+  if (!L5_selectedWord) return;
+  L5_STATE[i] = L5_selectedWord;
+  const el = document.getElementById('blank-' + i);
+  el.textContent = L5_selectedWord;
+  el.classList.add('filled');
+  L5_selectedWord = null;
+  document.querySelectorAll('#l5-bank .word-chip').forEach(c => c.classList.remove('sel'));
+  const allFilled = Object.values(L5_STATE).every(v => v !== null);
+  document.getElementById('l5-submit').style.display = allFilled ? 'block' : 'none';
+}
+
+function submitL5() {
+  let wrong = 0;
+  L5_SENTENCES.forEach((s, i) => {
+    const el = document.getElementById('blank-' + i);
+    const row = document.getElementById('fbrow-' + i);
+    if (L5_STATE[i] === s.ans) { el.classList.add('ok'); row.classList.add('correct'); }
+    else { el.classList.add('bad'); el.textContent = L5_STATE[i] + ' (✗)'; row.classList.add('wrong'); wrong++; }
+  });
+  const ok = wrong === 0;
+  showFb('l5', ok, '✓ 全部正确！', `✗ 答错 ${wrong} 处`,
+    'G0 是 GMP 体系中的隐藏角色：每个 M 都有一个 G0，专门跑调度代码（goroutine 创建/切换/销毁），M0 则是程序启动时的第一个系统线程。',
+    'G0 负责调度逻辑和 goroutine 切换；M0 负责初始化和启动主 goroutine；G0 运行在固定系统栈上；普通 G 初始栈 2KB~8KB，可以动态伸缩。');
+}
+</script>
+</body>
+</html>

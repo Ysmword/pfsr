@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MongoDB 场景选型 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root { --accent: #10b981; --accent-dim: rgba(16,185,129,0.2); }
+
+    .vs-wrap { display: flex; gap: 12px; margin: 10px 0; }
+    .vs-card {
+      flex: 1; padding: 14px; border-radius: var(--r-md); border: 2px solid;
+      text-align: center;
+    }
+    .vs-card.mongo  { border-color: #10b981; background: rgba(16,185,129,0.08); }
+    .vs-card.mysql  { border-color: #7c83ff; background: rgba(124,131,255,0.08); }
+    .vs-card .vc-icon { font-size: 24px; display: block; margin-bottom: 6px; }
+    .vs-card .vc-name { font-size: 14px; font-weight: 800; }
+    .vs-card.mongo .vc-name { color: #10b981; }
+    .vs-card.mysql .vc-name { color: #7c83ff; }
+    .vs-card .vc-traits { font-size: 11px; color: var(--text-dim); margin-top: 6px; line-height: 1.6; text-align: left; }
+
+    .scenario-box { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 12px 16px; margin: 8px 0; font-size: 13px; color: var(--text-muted); line-height: 1.8; }
+    .scenario-box strong { color: var(--text); }
+
+    .pick-row { display: flex; gap: 10px; margin: 10px 0; }
+    .pick-btn {
+      flex: 1; padding: 10px; border-radius: var(--r-sm); border: 2px solid var(--border);
+      background: var(--surface); cursor: pointer; text-align: center;
+      font-size: 14px; font-weight: 700; transition: all 0.2s;
+    }
+    .pick-btn:hover { transform: translateY(-2px); }
+    .pick-btn.mongo:hover, .pick-btn.mongo.sel { border-color: #10b981; background: rgba(16,185,129,0.1); color: #10b981; }
+    .pick-btn.mysql:hover, .pick-btn.mysql.sel { border-color: #7c83ff; background: rgba(124,131,255,0.1); color: #7c83ff; }
+    .pick-btn.both:hover, .pick-btn.both.sel  { border-color: #f59e0b; background: rgba(245,158,11,0.1); color: #f59e0b; }
+    .pick-btn.ok  { border-color: #10b981 !important; box-shadow: 0 0 8px rgba(16,185,129,0.3); }
+    .pick-btn.bad { border-color: #ef4444 !important; opacity: 0.6; }
+
+    .reason-row { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+    .reason-opt {
+      padding: 8px 12px; border-radius: var(--r-sm); border: 1.5px solid var(--border);
+      background: var(--surface); color: var(--text-muted); cursor: pointer;
+      font-size: 12px; transition: all 0.2s;
+    }
+    .reason-opt:hover { border-color: var(--accent); color: var(--text); }
+    .reason-opt.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .reason-opt.ok  { border-color: #10b981; background: rgba(16,185,129,0.1); color: #10b981; }
+    .reason-opt.bad { border-color: #ef4444; background: rgba(239,68,68,0.1); color: #ef4444; }
+
+    .schema-diff { display: flex; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+    .schema-side { flex: 1; min-width: 140px; background: #070712; border: 1px solid #2a2a4a; border-radius: var(--r-sm); padding: 10px 12px; font-family: 'Monaco','Menlo',monospace; font-size: 11px; color: #c8c8d4; }
+    .schema-title { font-size: 11px; font-weight: 700; margin-bottom: 6px; }
+    .mongo-json  { color: #10b981; } .mysql-col { color: #7c83ff; }
+    .schema-title.mongo { color: #10b981; } .schema-title.mysql { color: #7c83ff; }
+
+    .feedback-card { border-radius: var(--r-md); padding: 16px 20px; display: none; animation: fadeIn 0.3s; }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; } }
+  </style>
+</head>
+<body>
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">MongoDB 场景选型</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">🍃</span>
+    <h1 class="game-intro__title">MongoDB 场景选型</h1>
+    <p class="game-intro__desc">
+      MongoDB 还是 MySQL？<br>
+      给出 4 个真实业务场景，你来选型，<br>
+      说明为什么这个场景适合文档模型或关系模型。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 8 分钟</span></div>
+      <div>🎯 <span>4 关</span></div>
+      <div>✦ <span>文档模型 · Schema灵活性 · 事务 · 水平扩展</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开始选型 →</button>
+  </div>
+</div>
+
+<!-- 关1：特性对比认知 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 1 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">特性对比</h2>
+      <div class="vs-wrap">
+        <div class="vs-card mongo">
+          <span class="vc-icon">🍃</span>
+          <div class="vc-name">MongoDB</div>
+          <ul class="vc-traits">
+            <li>文档模型（BSON/JSON）</li>
+            <li>Schema 动态灵活</li>
+            <li>天然水平扩展（Sharding）</li>
+            <li>嵌套文档避免 JOIN</li>
+            <li>4.0+ 支持多文档事务</li>
+            <li>适合非结构化/半结构化</li>
+          </ul>
+        </div>
+        <div class="vs-card mysql">
+          <span class="vc-icon">🗄️</span>
+          <div class="vc-name">MySQL</div>
+          <ul class="vc-traits">
+            <li>关系模型（表/行/列）</li>
+            <li>Schema 严格固定</li>
+            <li>垂直扩展为主（分库分表复杂）</li>
+            <li>强大的 JOIN 能力</li>
+            <li>完整 ACID 事务</li>
+            <li>适合结构化、强一致性场景</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">以下哪个说法<strong style="color:var(--text);">错误</strong>？</p>
+      <div style="display:flex;flex-direction:column;gap:8px;" id="l1-opts">
+        <div class="reason-opt" onclick="pickL1('a',this)">A. MongoDB 4.0 以前不支持多文档 ACID 事务，只支持单文档原子性</div>
+        <div class="reason-opt" onclick="pickL1('b',this)">B. MongoDB 不支持任何形式的索引，所有查询都是全集合扫描</div>
+        <div class="reason-opt" onclick="pickL1('c',this)">C. MySQL 做水平扩展（Sharding）比 MongoDB 复杂得多</div>
+        <div class="reason-opt" onclick="pickL1('d',this)">D. MongoDB 的 Schema-less 特性意味着同一集合中不同文档可以有不同字段</div>
+      </div>
+      <div id="l1-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL1()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关2：场景选型（批量多场景） -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 2 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">场景选型</h2>
+      <p style="font-size:13px;color:var(--text-muted);">给出 4 个真实业务场景，各选 MongoDB 或 MySQL：</p>
+    </div>
+    <div id="l2-cases"></div>
+    <div id="l2-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL2()">提交全部</button>
+    </div>
+    <div class="feedback-card" id="l2-fb">
+      <div class="feedback-card__verdict" id="l2-vd"></div>
+      <p class="feedback-card__explain" id="l2-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(2)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关3：Schema 设计 -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 3 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">Schema 设计差异</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">用户的商品信息，不同商品属性差异很大（手机有 CPU/内存，衣服有尺码/颜色）。两种设计对比：</p>
+      <div class="schema-diff">
+        <div class="schema-side">
+          <div class="schema-title mongo">MongoDB 文档</div>
+          <span class="mongo-json">// 手机
+{
+  name: "iPhone",
+  cpu: "A17",
+  storage: "256GB"
+}
+// 衣服（同集合）
+{
+  name: "T-Shirt",
+  size: ["S","M","L"],
+  color: "red"
+}</span>
+        </div>
+        <div class="schema-side">
+          <div class="schema-title mysql">MySQL 关系表</div>
+          <span class="mysql-col">-- 方案一：宽表（空列多）
+products(id, name,
+  cpu, storage,
+  size, color, ...)
+
+-- 方案二：EAV 模式
+product_attrs(
+  product_id,
+  attr_name,
+  attr_value)</span>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">对于<strong>属性差异极大的多态商品</strong>场景，哪种方案最合适？</p>
+      <div style="display:flex;flex-direction:column;gap:8px;" id="l3-opts">
+        <div class="reason-opt" onclick="pickL3('mongo',this)">A. MongoDB 文档模型：每个商品文档只存自己的字段，灵活高效</div>
+        <div class="reason-opt" onclick="pickL3('wide',this)">B. MySQL 宽表：一张表存所有属性，简单但空列浪费严重，扩展难</div>
+        <div class="reason-opt" onclick="pickL3('eav',this)">C. MySQL EAV（属性值）模式：灵活但查询复杂、性能差、无法利用索引</div>
+        <div class="reason-opt" onclick="pickL3('json',this)">D. MySQL + JSON 列：折中方案，可以，但没有 MongoDB 的聚合和索引能力强</div>
+      </div>
+      <div id="l3-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL3()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关4：综合选型 -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 4 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">综合选型</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        一个内容平台（类似掘金/知乎）需要存储：文章内容（结构差异大）、用户账户（严格关系）、评论（嵌套）。应该如何搭配？
+      </p>
+    </div>
+    <div class="card">
+      <div style="display:flex;flex-direction:column;gap:8px;" id="l4-opts">
+        <div class="reason-opt" onclick="pickL4('a',this)">A. 全用 MySQL：关系型数据库更可靠，统一管理</div>
+        <div class="reason-opt" onclick="pickL4('b',this)">B. 全用 MongoDB：所有数据都是文档，统一存储</div>
+        <div class="reason-opt" onclick="pickL4('c',this)">C. 混合使用：用户账户用 MySQL（ACID 事务，关系一致性），文章内容+评论用 MongoDB（Schema 灵活，嵌套文档）</div>
+        <div class="reason-opt" onclick="pickL4('d',this)">D. 文章内容用 MongoDB，其他全用 MySQL，并用 MongoDB 事务同步</div>
+      </div>
+      <div id="l4-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL4()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(4)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">选型完成！</div>
+      <p class="complete-screen__desc">
+        你已掌握 MongoDB vs MySQL 选型核心：<br>
+        文档模型 vs 关系模型 · Schema 灵活性 ·<br>
+        多态商品设计 · 混合架构实践。<br>
+        面试问"MongoDB 和 MySQL 怎么选"，直接开讲。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再玩一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="../../game-utils.js"></script>
+<script>
+const G_TOTAL = 4;
+function startGame() { showScreen('level-1'); TopbarProgress.update({activeIndex:0}); initL2(); }
+function completeLevel(n) {
+  TopbarProgress.update({doneUpTo:n,activeIndex:n<G_TOTAL?n:-1});
+  if(n<G_TOTAL) showScreen('level-'+(n+1));
+  else { TopbarProgress.completeAll(); showScreen('complete'); }
+}
+function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+function showFb(prefix,ok,vOk,vBad,exOk,exBad){
+  const fb=document.getElementById(prefix+'-fb');
+  fb.className='feedback-card '+(ok?'correct':'wrong');
+  document.getElementById(prefix+'-vd').textContent=ok?vOk:vBad;
+  document.getElementById(prefix+'-ex').innerHTML=ok?exOk:exBad;
+  const sub=document.getElementById(prefix+'-submit');
+  if(sub) sub.style.display='none';
+  fb.style.display='block';
+}
+
+/* ── 关1 ── */
+let L1_picked=null;
+function pickL1(v,el){
+  L1_picked=v;
+  document.querySelectorAll('#l1-opts .reason-opt').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l1-submit').style.display='block';
+}
+function submitL1(){
+  const ok=L1_picked==='b';
+  document.querySelectorAll('#l1-opts .reason-opt').forEach(b=>{
+    const v=b.onclick.toString().match(/'([^']+)'/)?.[1];
+    if(v==='b') b.classList.add('ok');
+    else if(v===L1_picked&&!ok) b.classList.add('bad');
+  });
+  showFb('l1',ok,'✓ 找到错误项！','✗ 答错了',
+    '答案 B 是错误说法。<strong>MongoDB 支持索引</strong>（单字段、复合、全文、地理位置等），并且索引性能很强。"不支持任何索引"完全错误。其他选项均正确：A（4.0前只有单文档原子性）、C（MySQL Sharding 复杂）、D（同集合文档可以有不同字段）。',
+    'B 是错误说法。MongoDB 支持丰富的索引类型，这正是它高性能查询的基础。');
+}
+
+/* ── 关2 ── */
+const L2_CASES = [
+  {desc:'银行转账系统：用户账户余额，要求强 ACID 事务，不允许任何丢失',ans:'mysql',explain:'强 ACID 事务、强一致性 → MySQL。银行转账需要跨账户原子操作，MySQL 的成熟事务机制是首选。'},
+  {desc:'IoT 传感器日志：每秒数万条写入，数据格式可能随固件版本变化',ans:'mongo',explain:'高写入吞吐 + Schema 灵活（格式随版本变化）→ MongoDB。水平扩展天然适合海量时序写入。'},
+  {desc:'电商评论系统：每条评论有回复（嵌套），回复有回复，层级不固定',ans:'mongo',explain:'嵌套文档结构天然适合 MongoDB，把评论和回复存为嵌套数组，避免多表 JOIN。'},
+  {desc:'企业 ERP 系统：订单、库存、供应商多表强关联，大量复杂 JOIN 查询',ans:'mysql',explain:'强关系、复杂 JOIN → MySQL。ERP 系统需要表间的完整性约束和多表联查，关系数据库的强项。'},
+];
+const L2_STATE={};
+
+function initL2(){
+  L2_CASES.forEach((_,i)=>L2_STATE[i]=null);
+  document.getElementById('l2-cases').innerHTML=L2_CASES.map((c,i)=>`
+    <div class="card" style="margin:0 0 10px;" id="l2c-${i}">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">${i+1}. ${c.desc}</p>
+      <div class="pick-row">
+        <button class="pick-btn mongo" onclick="pickL2(${i},'mongo',this)">🍃 MongoDB</button>
+        <button class="pick-btn mysql" onclick="pickL2(${i},'mysql',this)">🗄️ MySQL</button>
+      </div>
+    </div>`).join('');
+}
+
+function pickL2(ci,v,el){
+  L2_STATE[ci]=v;
+  el.closest('.pick-row').querySelectorAll('.pick-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  if(L2_CASES.every((_,i)=>L2_STATE[i]!==null)) document.getElementById('l2-submit').style.display='block';
+}
+
+function submitL2(){
+  let wrong=0;
+  L2_CASES.forEach((c,i)=>{
+    const btns=document.getElementById('l2c-'+i).querySelectorAll('.pick-btn');
+    btns.forEach(b=>{
+      const v=b.onclick.toString().match(/pickL2\(\d+,'([^']+)'/)?.[1];
+      if(v===c.ans) b.classList.add('ok');
+      else if(v===L2_STATE[i]&&L2_STATE[i]!==c.ans) b.classList.add('bad');
+    });
+    if(L2_STATE[i]!==c.ans) wrong++;
+  });
+  showFb('l2',wrong===0,'✓ 全部选型正确！',`✗ 答错 ${wrong} 个`,
+    '核心判断依据：<br>• 强事务/强关联/复杂 JOIN → <strong>MySQL</strong><br>• 灵活 Schema / 嵌套数据 / 高写入吞吐 / 水平扩展 → <strong>MongoDB</strong>',
+    L2_CASES.filter((_,i)=>L2_STATE[i]!==_.ans).map(c=>c.explain).join('<br>'));
+}
+
+/* ── 关3 ── */
+let L3_picked=null;
+function pickL3(v,el){
+  L3_picked=v;
+  document.querySelectorAll('#l3-opts .reason-opt').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l3-submit').style.display='block';
+}
+function submitL3(){
+  const ok=L3_picked==='mongo';
+  document.querySelectorAll('#l3-opts .reason-opt').forEach(b=>{
+    const v=b.onclick.toString().match(/'([^']+)'/)?.[1];
+    if(v==='mongo') b.classList.add('ok');
+    else if(v===L3_picked&&!ok) b.classList.add('bad');
+  });
+  showFb('l3',ok,'✓ 选型正确！','✗ 答错了',
+    'A（MongoDB 文档）是最优解。<br>• 宽表：空列严重浪费，添加新属性要 ALTER TABLE，代价高。<br>• EAV：查询时 JOIN attr 表极其复杂（"找所有 CPU=A17 的手机"需要复杂 SQL），性能差。<br>• MySQL+JSON：比 EAV 好，但聚合查询和索引能力不如 MongoDB 的原生文档索引。<br>• MongoDB：每个文档只有该商品的字段，索引直接建在字段上，聚合查询天然高效。',
+    '最优解是 A（MongoDB）。多态商品是文档模型最经典的适用场景，避免了宽表空列和 EAV 复杂查询的两个极端。');
+}
+
+/* ── 关4 ── */
+let L4_picked=null;
+function pickL4(v,el){
+  L4_picked=v;
+  document.querySelectorAll('#l4-opts .reason-opt').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l4-submit').style.display='block';
+}
+function submitL4(){
+  const ok=L4_picked==='c';
+  document.querySelectorAll('#l4-opts .reason-opt').forEach(b=>{
+    const v=b.onclick.toString().match(/'([^']+)'/)?.[1];
+    if(v==='c') b.classList.add('ok');
+    else if(v===L4_picked&&!ok) b.classList.add('bad');
+  });
+  showFb('l4',ok,'✓ 选型最优！','✗ 答错了',
+    '<strong>C（混合架构）是最优解：</strong><br>• 用户账户 → MySQL：注册、登录、余额涉及 ACID 事务和关系一致性。<br>• 文章内容 → MongoDB：结构差异大（技术文章、图文、视频摘要），Schema 灵活，全文检索更易集成。<br>• 评论 → MongoDB：嵌套回复天然映射为嵌套文档，避免 MySQL 自关联查询。<br>实际大厂普遍采用混合数据库架构，根据数据特性选择最合适的存储引擎。',
+    '最优解是 C（混合使用）。没有银弹，根据每种数据的特性选择合适的数据库，是成熟的后端架构思路。');
+}
+</script>
+</body>
+</html>

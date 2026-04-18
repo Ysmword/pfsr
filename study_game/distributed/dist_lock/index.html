@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>分布式锁方案裁判 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root { --accent: #10b981; --accent-dim: rgba(16,185,129,0.2); }
+
+    .scenario-box {
+      background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.25);
+      border-radius: var(--r-sm); padding: 12px 16px; margin: 8px 0;
+      font-size: 13px; color: var(--text-muted); line-height: 1.8;
+    }
+    .scenario-box strong { color: var(--text); }
+
+    .opt-col { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .opt-btn { padding: 10px 14px; border-radius: var(--r-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--text-muted); cursor: pointer; font-size: 13px; text-align: left; transition: all 0.2s; }
+    .opt-btn:hover { border-color: var(--accent); color: var(--text); }
+    .opt-btn.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .opt-btn.ok  { border-color: #10b981; background: rgba(16,185,129,0.1); color: #10b981; }
+    .opt-btn.bad { border-color: #ef4444; background: rgba(239,68,68,0.1); color: #ef4444; }
+
+    .compare-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0; }
+    .compare-table th { padding: 8px 10px; background: var(--surface-alt); color: var(--accent); border: 1px solid var(--border); text-align: center; }
+    .compare-table td { padding: 7px 10px; border: 1px solid var(--border); color: var(--text-muted); text-align: center; }
+    .compare-table .good { color: #10b981; font-weight: 700; }
+    .compare-table .bad  { color: #ef4444; }
+    .compare-table .mid  { color: #f59e0b; }
+
+    .crash-scene { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin: 10px 0; }
+    .crash-node { padding: 12px 16px; border-radius: var(--r-md); border: 2px solid; text-align: center; min-width: 100px; }
+    .crash-node.alive  { border-color: #10b981; background: rgba(16,185,129,0.1); }
+    .crash-node.dead   { border-color: #ef4444; background: rgba(239,68,68,0.08); opacity: 0.6; }
+    .crash-node.client { border-color: #7c83ff; background: rgba(124,131,255,0.1); }
+    .crash-node-icon { font-size: 20px; }
+    .crash-node-name { font-size: 12px; font-weight: 700; margin-top: 4px; }
+    .crash-node-state { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+    .feedback-card { border-radius: var(--r-md); padding: 16px 20px; display: none; animation: fadeIn 0.3s; }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; } }
+  </style>
+</head>
+<body>
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">分布式锁方案裁判</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">🔐</span>
+    <h1 class="game-intro__title">分布式锁方案裁判</h1>
+    <p class="game-intro__desc">
+      Redis SETNX、Redlock、ZooKeeper 临时节点——<br>
+      给出场景和故障，你来判断哪种方案安全，<br>
+      哪种会导致锁丢失或重复持有。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 8 分钟</span></div>
+      <div>🎯 <span>4 关</span></div>
+      <div>✦ <span>SETNX · Redlock · ZooKeeper · 主节点宕机</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开始裁判 →</button>
+  </div>
+</div>
+
+<!-- 关1：方案选型 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 1 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">分布式锁方案对比</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">三种常见分布式锁方案的特性对比：</p>
+      <table class="compare-table">
+        <tr><th>方案</th><th>实现</th><th>强一致</th><th>性能</th><th>可用性</th></tr>
+        <tr>
+          <td style="font-weight:700;color:var(--accent);">Redis SETNX</td>
+          <td>SET key NX EX ttl</td>
+          <td class="bad">弱（主从延迟）</td>
+          <td class="good">高</td>
+          <td class="mid">中</td>
+        </tr>
+        <tr>
+          <td style="font-weight:700;color:var(--accent);">Redlock</td>
+          <td>多数 Redis 节点</td>
+          <td class="mid">较强</td>
+          <td class="mid">中</td>
+          <td class="good">高</td>
+        </tr>
+        <tr>
+          <td style="font-weight:700;color:var(--accent);">ZooKeeper</td>
+          <td>临时顺序节点</td>
+          <td class="good">强（ZAB协议）</td>
+          <td class="bad">低</td>
+          <td class="good">高</td>
+        </tr>
+      </table>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">给出业务场景，选最合适的分布式锁方案：</p>
+      <div class="scenario-box">⚡ 场景：电商订单扣库存，<strong>对性能要求极高</strong>，偶发的少量重复扣减可通过业务幂等处理，<strong>可接受极低概率的锁失效</strong>。</div>
+      <div class="opt-col" id="l1-opts">
+        <div class="opt-btn" onclick="pickOpt('1','redis',this)">A. Redis SETNX — 性能高，适合可接受轻微不一致的高并发场景</div>
+        <div class="opt-btn" onclick="pickOpt('1','redlock',this)">B. Redlock — 多节点投票，较强一致性</div>
+        <div class="opt-btn" onclick="pickOpt('1','zk',this)">C. ZooKeeper — 强一致，但性能差</div>
+      </div>
+      <div id="l1-submit" style="text-align:center;display:none;">
+        <button class="btn btn-primary" onclick="submitL1()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关2：Redis 主节点宕机 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 2 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">Redis 主节点宕机</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">客户端 A 用 SETNX 获取了锁，存在主节点，<strong style="color:#ef4444;">主节点在锁同步到从节点之前宕机</strong>，Sentinel 把从节点提升为主。</p>
+      <div class="crash-scene">
+        <div class="crash-node dead"><div class="crash-node-icon">💥</div><div class="crash-node-name">旧 Master</div><div class="crash-node-state">宕机</div></div>
+        <div class="crash-node alive"><div class="crash-node-icon">⭐</div><div class="crash-node-name">新 Master</div><div class="crash-node-state">没有锁数据</div></div>
+        <div class="crash-node client"><div class="crash-node-icon">💻</div><div class="crash-node-name">客户端 B</div><div class="crash-node-state">尝试获取锁</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">这种情况会发生什么？</p>
+      <div class="opt-col" id="l2-opts">
+        <div class="opt-btn" onclick="pickOpt('2','ok',this)">A. 没问题，新 Master 会用 AOF 恢复锁数据</div>
+        <div class="opt-btn" onclick="pickOpt('2','dup',this)">B. 客户端 B 可以成功获取锁，导致<strong>两个客户端同时持有锁</strong>（锁安全性破坏）</div>
+        <div class="opt-btn" onclick="pickOpt('2','block',this)">C. 客户端 B 会等到锁超时才能获取，没有问题</div>
+      </div>
+      <div id="l2-submit" style="text-align:center;display:none;">
+        <button class="btn btn-primary" onclick="submitL2()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l2-fb">
+      <div class="feedback-card__verdict" id="l2-vd"></div>
+      <p class="feedback-card__explain" id="l2-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(2)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关3：Redlock 算法 -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 3 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">Redlock 算法</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">Redlock：5 个独立 Redis 节点，客户端依次向所有节点申请锁，超过半数（≥3）成功才视为获锁。</p>
+      <div class="scenario-box">
+        场景：5 节点 Redlock，客户端 A 已在节点 1、2、3 上获锁（3/5 超半数）。<br>
+        此时节点 3 突然宕机，客户端 B 向节点 3（宕机）、4、5 申请锁，节点 4、5 没有锁记录。
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">客户端 B 能获取到锁吗？</p>
+      <div class="opt-col" id="l3-opts">
+        <div class="opt-btn" onclick="pickOpt('3','no',this)">A. 不能，B 只能在节点 4、5 上获锁（2/5 = 不超半数），获锁失败</div>
+        <div class="opt-btn" onclick="pickOpt('3','yes',this)">B. 能，B 向 3（宕机）、4、5 申请，4 和 5 没有锁，B 可获 2 票但失败；但如果 B 向其他节点申请也算的话 B 可能获锁</div>
+        <div class="opt-btn" onclick="pickOpt('3','risk',this)">C. 在极端时序下（如节点3宕机前A的锁未持久化，节点3重启后B再申请），存在 B 也能获锁的风险</div>
+      </div>
+      <div id="l3-submit" style="text-align:center;display:none;">
+        <button class="btn btn-primary" onclick="submitL3()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关4：ZooKeeper 临时节点 -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 4 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">ZooKeeper 临时节点</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">ZooKeeper 分布式锁基于<strong style="color:var(--text);">临时顺序节点</strong>：客户端创建临时节点，最小序号的节点持锁，其他客户端 watch 前一个节点。</p>
+      <div class="scenario-box">
+        问题 1：持锁的客户端 A 突然宕机（进程崩溃），锁会自动释放吗？<br><br>
+        问题 2：如果持锁客户端 A 由于 GC STW 暂停了 30 秒，导致 ZK Session 超时，锁自动释放了，但 A 以为自己还持锁并继续操作临界资源。这是什么问题？如何防止？
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:6px;"><strong>Q1：A 宕机，锁会自动释放吗？</strong></p>
+      <div class="opt-col" id="l4a-opts">
+        <div class="opt-btn" onclick="pickL4a('yes',this)">会。临时节点在客户端 Session 断开时由 ZooKeeper 自动删除</div>
+        <div class="opt-btn" onclick="pickL4a('no',this)">不会。需要客户端主动调用 delete 才能释放</div>
+        <div class="opt-btn" onclick="pickL4a('timeout',this)">不会立即释放，等 TTL 超时才释放</div>
+      </div>
+      <p style="font-size:13px;color:var(--text-muted);margin:10px 0 6px;"><strong>Q2：GC 暂停导致锁被抢走但 A 继续操作，如何防止？</strong></p>
+      <div class="opt-col" id="l4b-opts">
+        <div class="opt-btn" onclick="pickL4b('fence',this)">使用 Fencing Token（锁版本号）：操作资源时带上 token，资源侧拒绝旧 token 的请求</div>
+        <div class="opt-btn" onclick="pickL4b('ttl',this)">延长 Session TTL，避免 GC 期间超时</div>
+        <div class="opt-btn" onclick="pickL4b('noway',this)">这个问题无解，ZK 锁本质上是不安全的</div>
+      </div>
+      <div id="l4-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL4()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(4)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">裁判完成！</div>
+      <p class="complete-screen__desc">
+        你已掌握分布式锁的全部核心知识：<br>
+        SETNX 主从延迟风险 · Redlock 多数派投票 ·<br>
+        ZK 临时节点自动释放 · Fencing Token 防止脑裂。<br>
+        分布式系统面试，稳了。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再玩一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="../../game-utils.js"></script>
+<script>
+const G_TOTAL = 4;
+function startGame() { showScreen('level-1'); TopbarProgress.update({activeIndex:0}); }
+function completeLevel(n) {
+  TopbarProgress.update({doneUpTo:n,activeIndex:n<G_TOTAL?n:-1});
+  if(n<G_TOTAL) showScreen('level-'+(n+1));
+  else { TopbarProgress.completeAll(); showScreen('complete'); }
+}
+function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+function showFb(prefix,ok,vOk,vBad,exOk,exBad){
+  const fb=document.getElementById(prefix+'-fb');
+  fb.className='feedback-card '+(ok?'correct':'wrong');
+  document.getElementById(prefix+'-vd').textContent=ok?vOk:vBad;
+  document.getElementById(prefix+'-ex').innerHTML=ok?exOk:exBad;
+  const sub=document.getElementById(prefix+'-submit');
+  if(sub) sub.style.display='none';
+  fb.style.display='block';
+}
+
+const PICKS={};
+function pickOpt(lvl,v,el){
+  PICKS[lvl]=v;
+  el.closest('.opt-col').querySelectorAll('.opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l'+lvl+'-submit').style.display='block';
+}
+
+function markOpts(selector,correct,picked){
+  document.querySelectorAll(selector+' .opt-btn').forEach(b=>{
+    const v=b.onclick.toString().match(/pickOpt\('[^']+','([^']+)'/)?.[1];
+    if(v===correct) b.classList.add('ok');
+    else if(v===picked&&picked!==correct) b.classList.add('bad');
+  });
+}
+
+function submitL1(){
+  const ok=PICKS['1']==='redis';
+  markOpts('#l1-opts','redis',PICKS['1']);
+  showFb('l1',ok,'✓ 选型正确！','✗ 答错了',
+    'Redis SETNX 性能最高，适合高并发 + 可接受轻微不一致的场景（业务幂等兜底）。电商扣库存通常会做幂等校验（如扣减后检查库存），轻微重复扣减可纠正。',
+    '答案 A（Redis SETNX）。高性能场景优先 Redis，ZK 性能差不合适，Redlock 适合对一致性有更高要求的场景。');
+}
+function submitL2(){
+  const ok=PICKS['2']==='dup';
+  markOpts('#l2-opts','dup',PICKS['2']);
+  showFb('l2',ok,'✓ 判断正确！','✗ 答错了',
+    '这是 Redis 单主 SETNX 的经典风险：<strong>主从异步复制 + 主节点宕机 = 锁丢失</strong>。新主不知道锁的存在，客户端 B 可以获取到"同一把锁"，A 和 B 同时持锁 → 安全性破坏。解决方案：Redlock（多节点投票）或业务层幂等。',
+    '答案 B。锁存在主节点，异步复制到从节点前主机宕机 → 新主没有锁 → B 可以获锁 → 两个客户端同时持锁。');
+}
+function submitL3(){
+  const ok=PICKS['3']==='risk';
+  markOpts('#l3-opts','risk',PICKS['3']);
+  showFb('l3',ok,'✓ 正确！','✗ 答错了',
+    '这是 Martin Kleppmann 指出的 Redlock 边界场景：节点宕机后<strong>未持久化</strong>（若关闭了持久化）然后重启，节点上的锁数据消失。若此时 B 从该节点获锁，加上另一个节点，可能达到多数派。Redlock 要求节点宕机后在锁的最长 TTL 内不重启，正是为避免此问题。',
+    '答案 C。在极端情况（节点宕机前锁未持久化，节点重启后数据消失）下，B 可能从重启后的节点获锁，导致两人同时持锁。这是 Redlock 的已知局限。');
+}
+let L4a=null,L4b=null;
+function pickL4a(v,el){
+  L4a=v;
+  el.closest('.opt-col').querySelectorAll('.opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  if(L4a&&L4b) document.getElementById('l4-submit').style.display='block';
+}
+function pickL4b(v,el){
+  L4b=v;
+  el.closest('.opt-col').querySelectorAll('.opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  if(L4a&&L4b) document.getElementById('l4-submit').style.display='block';
+}
+function submitL4(){
+  const ok=L4a==='yes'&&L4b==='fence';
+  ['yes','no','timeout'].forEach(v=>{
+    document.querySelectorAll('#l4a-opts .opt-btn').forEach(b=>{
+      const bv=b.onclick.toString().match(/pickL4a\('([^']+)'/)?.[1];
+      if(bv==='yes') b.classList.add('ok');
+      else if(bv===L4a&&L4a!=='yes') b.classList.add('bad');
+    });
+  });
+  ['fence','ttl','noway'].forEach(v=>{
+    document.querySelectorAll('#l4b-opts .opt-btn').forEach(b=>{
+      const bv=b.onclick.toString().match(/pickL4b\('([^']+)'/)?.[1];
+      if(bv==='fence') b.classList.add('ok');
+      else if(bv===L4b&&L4b!=='fence') b.classList.add('bad');
+    });
+  });
+  showFb('l4',ok,'✓ 两题全对！','✗ 有误',
+    'Q1：ZK 临时节点（Ephemeral Node）在 Session 断开时<strong>自动删除</strong>，无需手动释放，这是 ZK 分布式锁优于 Redis 的关键点之一。<br>Q2：<strong>Fencing Token</strong>（版本号/单调递增ID）：每次获锁时 ZK 分配一个递增 token，写资源时带上 token，资源侧拒绝比当前 token 小的请求，即使持锁方 GC 后继续操作也会被拒绝。',
+    'Q1 答案：会自动释放（临时节点特性）。Q2 答案：Fencing Token——延长TTL不根治问题，问题本质是锁的有效期内客户端"以为还持锁"，需要资源侧的版本检查来防止。');
+}
+</script>
+</body>
+</html>

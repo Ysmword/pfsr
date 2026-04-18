@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MySQL 锁冲突判断 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root {
+      --accent:     #7c83ff;
+      --accent-dim: rgba(124, 131, 255, 0.25);
+    }
+    .code-block {
+      background: #0a0a14; border: 1px solid #2a2a4a; border-radius: var(--r-sm);
+      padding: 12px 16px; font-family: 'Monaco','Menlo',monospace; font-size: 13px;
+      line-height: 1.7; color: #c8c8d4; margin: 8px 0; white-space: pre; overflow-x: auto;
+    }
+    .code-block .ck { color: #60a5fa; } .code-block .cs { color: #10b981; }
+    .code-block .cc { color: #4b5563; font-style: italic; }
+
+    /* 锁类型选项 */
+    .lock-opts { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+    .lbtn {
+      padding: 8px 16px; border-radius: var(--r-sm); border: 1.5px solid var(--border);
+      background: var(--surface); color: var(--text-muted); cursor: pointer;
+      font-size: 13px; transition: all 0.2s;
+    }
+    .lbtn:hover { border-color: var(--accent); color: var(--text); }
+    .lbtn.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .lbtn.ok  { border-color: #10b981; background: rgba(16,185,129,0.1); color: #10b981; }
+    .lbtn.bad { border-color: #ef4444; background: rgba(239,68,68,0.1);  color: #ef4444; }
+
+    /* 事务时间轴 */
+    .timeline-wrap { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
+    .txn-row { display: flex; align-items: center; gap: 0; }
+    .txn-label { width: 80px; flex-shrink: 0; font-size: 12px; font-weight: 700; }
+    .txn-label.a { color: #7c83ff; } .txn-label.b { color: #f59e0b; }
+    .txn-events { display: flex; align-items: center; gap: 0; flex: 1; }
+    .tev {
+      padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600;
+      white-space: nowrap; text-align: center; min-width: 70px;
+    }
+    .seg { height: 3px; flex: 1; min-width: 12px; }
+    .tev-a { background: #7c83ff; color: white; }
+    .tev-b { background: #f59e0b; color: #111; }
+    .tev-wait { background: #ef444433; border: 1px dashed #ef4444; color: #ef4444; }
+    .tev-ok   { background: #10b98133; border: 1px dashed #10b981; color: #10b981; }
+    .seg-a { background: #7c83ff44; } .seg-b { background: #f59e0b44; }
+
+    /* 数字轴（间隙锁） */
+    .num-axis {
+      display: flex; align-items: center; gap: 0;
+      background: var(--surface-alt); border: 1px solid var(--border);
+      border-radius: var(--r-md); padding: 20px 16px; margin: 12px 0;
+      position: relative;
+    }
+    .axis-line { flex: 1; height: 3px; background: var(--border); position: relative; }
+    .axis-tick {
+      position: absolute; top: -18px; display: flex; flex-direction: column; align-items: center;
+    }
+    .tick-label { font-size: 12px; color: var(--text-dim); margin-bottom: 2px; }
+    .tick-mark  { width: 2px; height: 8px; background: var(--border); }
+    .tick-data  {
+      position: absolute; top: 8px;
+      font-size: 11px; font-weight: 700; padding: 2px 7px;
+      border-radius: 4px; white-space: nowrap;
+    }
+    .td-exists  { background: rgba(124,131,255,0.2); border: 1px solid #7c83ff; color: #7c83ff; }
+    .td-missing { background: rgba(75,85,99,0.2);    border: 1px solid #374151; color: #6b7280; }
+
+    .gap-range-opts { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .gropt {
+      padding: 10px 14px; border-radius: var(--r-sm); border: 1.5px solid var(--border);
+      background: var(--surface); color: var(--text-muted); cursor: pointer;
+      font-size: 13px; text-align: left; transition: all 0.2s;
+    }
+    .gropt:hover { border-color: var(--accent); color: var(--text); }
+    .gropt.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .gropt.ok  { border-color: #10b981; background: rgba(16,185,129,0.1); color: #10b981; }
+    .gropt.bad { border-color: #ef4444; background: rgba(239,68,68,0.1);  color: #ef4444; }
+
+    /* ── 关3：间隙轴点选 ── */
+    .gap-axis-box {
+      background: var(--surface-alt); border: 1px solid var(--border);
+      border-radius: var(--r-md); padding: 16px 12px 12px; margin: 10px 0;
+    }
+    .gap-axis-row { display: flex; align-items: center; }
+    .gap-node {
+      width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700;
+    }
+    .gap-node.exists { background: rgba(124,131,255,0.2); border: 2px solid #7c83ff; color: #7c83ff; }
+    .gap-node.inf    { background: var(--surface); border: 2px solid var(--border); color: var(--text-dim); font-size: 14px; }
+    .gap-seg {
+      flex: 1; height: 34px; border-radius: 4px;
+      border: 2px dashed #374151; background: transparent;
+      cursor: pointer; transition: all 0.2s;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: var(--text-dim);
+    }
+    .gap-seg:hover { background: rgba(124,131,255,0.1); border-color: var(--accent); color: var(--accent); }
+    .gap-seg.sel-gap     { background: rgba(16,185,129,0.15); border-color: #10b981; border-style: solid; color: #10b981; font-weight: 700; }
+    .gap-seg.correct-gap { background: rgba(16,185,129,0.2);  border-color: #10b981; border-style: solid; color: #10b981; }
+    .gap-seg.wrong-gap   { background: rgba(239,68,68,0.15);  border-color: #ef4444; border-style: solid; color: #ef4444; }
+
+    /* 死锁步骤 */
+    .dl-steps { display: flex; flex-direction: column; gap: 8px; }
+    .dl-step {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; border-radius: var(--r-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      font-size: 13px; color: var(--text-muted);
+    }
+    .dl-step.highlight { border-color: #ef4444; background: rgba(239,68,68,0.08); color: var(--text); }
+    .dl-idx { width: 22px; height: 22px; border-radius: 50%; background: var(--border); color: var(--text-dim); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+
+    /* 公共 */
+    .feedback-card {
+      border-radius: var(--r-md); padding: 16px 20px; display: none; animation: fadeIn 0.3s;
+    }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+
+    .lock-tag {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 12px; font-weight: 700; margin: 2px;
+    }
+    .lt-global { background: rgba(239,68,68,0.2); color: #ef4444; }
+    .lt-table  { background: rgba(245,158,11,0.2); color: #f59e0b; }
+    .lt-row    { background: rgba(124,131,255,0.2); color: #7c83ff; }
+    .lt-gap    { background: rgba(16,185,129,0.2);  color: #10b981; }
+    .lt-nk     { background: rgba(0,212,255,0.2);   color: #00d4ff; }
+  </style>
+</head>
+<body>
+
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">MySQL 锁冲突判断</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">🔒</span>
+    <h1 class="game-intro__title">MySQL 锁冲突判断</h1>
+    <p class="game-intro__desc">
+      给出 SQL 和事务时间轴，你来判断加什么锁、<br>
+      间隙锁覆盖哪个范围、哪一步会发生死锁。<br>
+      5 关覆盖 MySQL InnoDB 锁机制全部考点。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 12 分钟</span></div>
+      <div>🎯 <span>5 关</span></div>
+      <div>✦ <span>行锁 · 间隙锁 · 临键锁 · 死锁</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开始判断 →</button>
+  </div>
+</div>
+
+
+<!-- 关1：锁粒度识别 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 1 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">锁粒度识别</h2>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">给出 4 条 SQL，判断各自加的锁类型：</p>
+    </div>
+    <div id="l1-cases"></div>
+    <div id="l1-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL1()">提交判断</button>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关2：记录锁冲突 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 2 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">记录锁冲突</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        两个事务对<strong style="color:var(--text);">同一行</strong>操作。观察时间轴，判断事务 B 的 UPDATE 是等待还是执行：
+      </p>
+      <div class="timeline-wrap">
+        <div class="txn-row">
+          <div class="txn-label a">事务 A</div>
+          <div class="txn-events">
+            <div class="tev tev-a">BEGIN</div><div class="seg seg-a"></div>
+            <div class="tev tev-a">UPDATE id=5<br><span style="font-size:10px;">加记录锁</span></div>
+            <div class="seg seg-a"></div><div class="seg seg-a"></div><div class="seg seg-a"></div>
+            <div class="tev tev-a">COMMIT</div>
+          </div>
+        </div>
+        <div class="txn-row">
+          <div class="txn-label b">事务 B</div>
+          <div class="txn-events">
+            <div class="seg seg-b"></div>
+            <div class="tev tev-b">BEGIN</div><div class="seg seg-b"></div>
+            <div class="tev tev-b" style="border:1px dashed #f59e0b;">UPDATE id=5<br><span style="font-size:10px;">???</span></div>
+            <div class="seg seg-b"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">事务 A 还未提交时，事务 B 的 UPDATE id=5 会？</p>
+      <div class="lock-opts" id="l2-opts">
+        <button class="lbtn" onclick="pickL2('wait',this)">🔒 进入等待，阻塞直到 A 提交</button>
+        <button class="lbtn" onclick="pickL2('ok',this)">✅ 立即执行成功</button>
+        <button class="lbtn" onclick="pickL2('panic',this)">🔥 立即报错</button>
+      </div>
+      <div id="l2-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitSingle('2','wait','🔒 进入等待','✅ 判断正确！','✗ 判断错误','InnoDB 记录锁是<strong>排他锁（X 锁）互斥</strong>：A 的 UPDATE 持有 id=5 的 X 锁，B 的 UPDATE 也需要 X 锁 → B 阻塞等待，直到 A 提交释放锁。','答案：<strong>等待</strong>。两个事务都想修改同一行，InnoDB X 锁互斥，后到的必须等前一个提交或回滚才能继续。')">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l2-fb">
+      <div class="feedback-card__verdict" id="l2-vd"></div>
+      <p class="feedback-card__explain" id="l2-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(2)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关3：间隙锁范围 -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 3 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">间隙锁范围</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        表中有如下数据（id 是主键），隔离级别 RR（可重复读）：
+      </p>
+      <div style="overflow-x:auto;">
+        <table style="border-collapse:collapse;font-size:13px;width:100%;">
+          <tr style="background:var(--surface-alt);">
+            <th style="padding:8px 14px;border:1px solid var(--border);color:var(--accent);">id</th>
+            <th style="padding:8px 14px;border:1px solid var(--border);color:var(--text-muted);">name</th>
+          </tr>
+          <tr><td style="padding:7px 14px;border:1px solid var(--border);text-align:center;font-weight:700;color:var(--accent);">3</td><td style="padding:7px 14px;border:1px solid var(--border);color:var(--text-muted);">张三</td></tr>
+          <tr><td style="padding:7px 14px;border:1px solid var(--border);text-align:center;font-weight:700;color:var(--accent);">7</td><td style="padding:7px 14px;border:1px solid var(--border);color:var(--text-muted);">李四</td></tr>
+          <tr><td style="padding:7px 14px;border:1px solid var(--border);text-align:center;font-weight:700;color:var(--accent);">12</td><td style="padding:7px 14px;border:1px solid var(--border);color:var(--text-muted);">王五</td></tr>
+          <tr><td style="padding:7px 14px;border:1px solid var(--border);text-align:center;font-weight:700;color:var(--accent);">20</td><td style="padding:7px 14px;border:1px solid var(--border);color:var(--text-muted);">赵六</td></tr>
+        </table>
+      </div>
+      <div class="code-block" style="margin-top:10px;"><span class="ck">SELECT</span> * <span class="ck">FROM</span> t <span class="ck">WHERE</span> id = <span class="cs">10</span> <span class="ck">FOR UPDATE</span>;<span class="cc">
+-- id=10 不存在，RR 隔离级别</span></div>
+      <p style="font-size:13px;color:var(--text-muted);">id=10 的行不存在，加的间隙锁范围是？</p>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:4px;">
+        点击数字轴上包含 <strong style="color:#ef4444;">id=10</strong> 的间隙区间，标出间隙锁范围：
+      </p>
+      <div class="gap-axis-box">
+        <div class="gap-axis-row">
+          <div class="gap-node inf">-∞</div>
+          <div class="gap-seg" id="gs-0" onclick="selectGap(0)">(-∞,3)</div>
+          <div class="gap-node exists">3</div>
+          <div class="gap-seg" id="gs-1" onclick="selectGap(1)">(3,7)</div>
+          <div class="gap-node exists">7</div>
+          <div class="gap-seg" id="gs-2" onclick="selectGap(2)">(7,12)</div>
+          <div class="gap-node exists">12</div>
+          <div class="gap-seg" id="gs-3" onclick="selectGap(3)">(12,20)</div>
+          <div class="gap-node exists">20</div>
+          <div class="gap-seg" id="gs-4" onclick="selectGap(4)">(20,+∞)</div>
+          <div class="gap-node inf">+∞</div>
+        </div>
+        <div style="display:flex;gap:14px;margin-top:10px;font-size:11px;color:var(--text-dim);">
+          <span style="display:flex;align-items:center;gap:5px;">
+            <span style="width:14px;height:14px;border-radius:50%;background:rgba(124,131,255,0.2);border:2px solid #7c83ff;display:inline-block;"></span>行存在
+          </span>
+          <span style="display:flex;align-items:center;gap:5px;">
+            <span style="width:30px;height:10px;border-radius:3px;border:2px dashed #374151;display:inline-block;"></span>间隙区间（可点击）
+          </span>
+        </div>
+      </div>
+      <div id="l3-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL3gap()">提交标注</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关4：Next-Key Lock -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 4 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">Next-Key Lock</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        同样的表（id: 3, 7, 12, 20），RR 隔离级别：
+      </p>
+      <div class="code-block"><span class="ck">SELECT</span> * <span class="ck">FROM</span> t <span class="ck">WHERE</span> id = <span class="cs">7</span> <span class="ck">FOR UPDATE</span>;<span class="cc">
+-- id=7 存在，RR 隔离级别</span></div>
+      <p style="font-size:13px;color:var(--text-muted);">id=7 存在，这条查询加的 Next-Key Lock 是？</p>
+      <p style="font-size:12px;color:var(--text-dim);margin-top:6px;">提示：Next-Key Lock = 间隙锁 + 记录锁，是一个左开右闭区间。</p>
+    </div>
+    <div class="card">
+      <div class="gap-range-opts" id="l4-opts">
+        <div class="gropt" onclick="pickL4('a',this)">A. (3, 7]  — 左边间隙 + id=7 记录锁（临键锁）</div>
+        <div class="gropt" onclick="pickL4('b',this)">B. (7, 12) — 右边间隙锁</div>
+        <div class="gropt" onclick="pickL4('c',this)">C. (3, 12) — 整个周围范围都锁</div>
+        <div class="gropt" onclick="pickL4('d',this)">D. 只加 id=7 记录锁，不加间隙锁</div>
+      </div>
+      <div id="l4-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitSingle('4','a','A. (3, 7]','✅ 正确！','✗ 答错了','Next-Key Lock = 左边间隙锁 + 当前记录锁 = <strong>(3, 7]</strong>（左开右闭）。它防止了：① 在 (3,7) 区间内插入新行（防幻读）；② 修改 id=7 的记录（行锁）。RR 隔离级别下，InnoDB 默认使用临键锁而不是纯间隙锁。','答案：<strong>A. (3, 7]</strong>。Next-Key Lock 是「左开右闭」区间，= 左侧间隙 + 当前行记录锁。查询 id=7（存在），加 (3, 7] 的临键锁。')">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(4)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关5：死锁复现 -->
+<div class="screen" id="screen-level-5">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 5 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">死锁复现</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        两个事务交错执行，判断哪一步产生死锁：
+      </p>
+      <div class="dl-steps" id="l5-steps">
+        <div class="dl-step"><div class="dl-idx">1</div><div><span style="color:#7c83ff;font-weight:700;">事务 A</span>：<code>UPDATE t SET v=1 WHERE id=3</code>（加 id=3 行锁，成功）</div></div>
+        <div class="dl-step"><div class="dl-idx">2</div><div><span style="color:#f59e0b;font-weight:700;">事务 B</span>：<code>UPDATE t SET v=2 WHERE id=7</code>（加 id=7 行锁，成功）</div></div>
+        <div class="dl-step"><div class="dl-idx">3</div><div><span style="color:#7c83ff;font-weight:700;">事务 A</span>：<code>UPDATE t SET v=3 WHERE id=7</code>（等待 B 释放 id=7 的锁…）</div></div>
+        <div class="dl-step"><div class="dl-idx">4</div><div><span style="color:#f59e0b;font-weight:700;">事务 B</span>：<code>UPDATE t SET v=4 WHERE id=3</code>（等待 A 释放 id=3 的锁…）</div></div>
+      </div>
+      <div style="margin-top:12px;font-size:13px;color:var(--text-muted);">死锁在第几步产生？死锁检测后谁被回滚？</div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;"><strong>① 死锁在哪步产生？</strong></p>
+      <div class="lock-opts" id="l5a-opts">
+        <button class="lbtn" onclick="pickL5a('3',this)">第 3 步</button>
+        <button class="lbtn" onclick="pickL5a('4',this)">第 4 步</button>
+        <button class="lbtn" onclick="pickL5a('both',this)">第 3 和 4 步同时</button>
+      </div>
+      <p style="font-size:13px;color:var(--text-muted);margin-top:12px;margin-bottom:8px;"><strong>② 死锁后谁被回滚？</strong></p>
+      <div class="lock-opts" id="l5b-opts">
+        <button class="lbtn" onclick="pickL5b('a',this)">事务 A 回滚</button>
+        <button class="lbtn" onclick="pickL5b('b',this)">事务 B 回滚</button>
+        <button class="lbtn" onclick="pickL5b('low',this)">回滚持锁少（代价小）的那个</button>
+        <button class="lbtn" onclick="pickL5b('random',this)">随机选一个</button>
+      </div>
+      <div id="l5-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL5()">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l5-fb">
+      <div class="feedback-card__verdict" id="l5-vd"></div>
+      <p class="feedback-card__explain" id="l5-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(5)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">无锁通关！</div>
+      <p class="complete-screen__desc">
+        你已掌握 MySQL InnoDB 锁机制的全部核心：<br>
+        锁粒度识别 · 记录锁互斥 · 间隙锁范围 ·<br>
+        临键锁（Next-Key Lock）· 死锁检测与回滚。<br>
+        面试遇到锁问题，稳了。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再玩一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script src="../../game-utils.js"></script>
+<script>
+const G_TOTAL = 5;
+function startGame() { showScreen('level-1'); TopbarProgress.update({ activeIndex: 0 }); initL1(); }
+function completeLevel(n) {
+  TopbarProgress.update({ doneUpTo: n, activeIndex: n < G_TOTAL ? n : -1 });
+  if (n < G_TOTAL) { showScreen('level-' + (n + 1)); }
+  else { TopbarProgress.completeAll(); showScreen('complete'); }
+}
+function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+
+function showFb(prefix, ok, vOk, vBad, exOk, exBad) {
+  const fb = document.getElementById(prefix + '-fb');
+  fb.className = 'feedback-card ' + (ok ? 'correct' : 'wrong');
+  document.getElementById(prefix + '-vd').textContent = ok ? vOk : vBad;
+  document.getElementById(prefix + '-ex').innerHTML = ok ? exOk : exBad;
+  document.getElementById(prefix + '-submit').style.display = 'none';
+  fb.style.display = 'block';
+}
+
+/* ── 关1：锁粒度 ── */
+const L1_CASES = [
+  { sql: 'FLUSH TABLES WITH READ LOCK', opts:['全局锁','表级锁','行级锁','意向锁'], ans: 0, explain:'FTWRL 加<strong>全局读锁</strong>，整个数据库只读，常用于全库备份。' },
+  { sql: 'LOCK TABLES orders WRITE', opts:['全局锁','表级写锁','行级锁','无锁'], ans: 1, explain:'LOCK TABLES … WRITE 直接加<strong>表级写锁</strong>，其他会话不能读写该表。' },
+  { sql: 'UPDATE orders SET status=1 WHERE id=100', opts:['全局锁','表锁（IS）','行级 X 锁','间隙锁'], ans: 2, explain:'通过主键精确更新一行，InnoDB 加该行的<strong>排他行锁（X 锁）</strong>。' },
+  { sql: "SELECT * FROM orders WHERE id>10 FOR UPDATE", opts:['只加间隙锁','临键锁（Next-Key）','只加记录锁','无锁'], ans: 1, explain:'范围查询 + FOR UPDATE，RR 隔离级别下加<strong>临键锁（Next-Key Lock）</strong>：覆盖满足条件的行及其间隙。' },
+];
+const L1_STATE = {};
+
+function initL1() {
+  L1_CASES.forEach((_, i) => L1_STATE[i] = null);
+  document.getElementById('l1-cases').innerHTML = L1_CASES.map((c, i) => `
+    <div class="card" style="margin:0;" id="lc-${i}">
+      <div class="code-block">${c.sql}</div>
+      <div class="lock-opts">
+        ${c.opts.map((o, j) => `<button class="lbtn" onclick="pickL1(${i},${j},this)">${o}</button>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function pickL1(ci, j, el) {
+  L1_STATE[ci] = j;
+  document.querySelectorAll(`#lc-${ci} .lbtn`).forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  const allDone = L1_CASES.every((_, i) => L1_STATE[i] !== null);
+  document.getElementById('l1-submit').style.display = allDone ? 'block' : 'none';
+}
+
+function submitL1() {
+  let wrong = 0;
+  L1_CASES.forEach((c, i) => {
+    const btns = document.querySelectorAll(`#lc-${i} .lbtn`);
+    if (L1_STATE[i] === c.ans) document.getElementById('lc-' + i).style.outline = '2px solid #10b981';
+    else { document.getElementById('lc-' + i).style.outline = '2px solid #ef4444'; wrong++; }
+    btns[c.ans].classList.add('ok');
+    if (L1_STATE[i] !== c.ans) btns[L1_STATE[i]].classList.add('bad');
+  });
+  showFb('l1', wrong === 0, '✓ 全部正确！', `✗ 答错 ${wrong} 个`,
+    '你已掌握 MySQL 锁粒度层次：全局锁 → 表锁 → 行锁（记录锁/间隙锁/临键锁）。',
+    L1_CASES.filter((c, i) => L1_STATE[i] !== c.ans).map(c => c.explain).join('<br>'));
+}
+
+/* ── 通用单选 ── */
+const SINGLES = {};
+function pickL2(v, el) { SINGLES['l2'] = v; sel('#l2-opts', el); document.getElementById('l2-submit').style.display = 'block'; }
+function pickL4(v, el) { SINGLES['l4'] = v; sel('#l4-opts', el); document.getElementById('l4-submit').style.display = 'block'; }
+
+/* ── 关3：间隙轴点选 ── */
+const L3_GAP_LABELS  = ['(-∞, 3)', '(3, 7)', '(7, 12)', '(12, 20)', '(20, +∞)'];
+const L3_GAP_CORRECT = 2; // (7, 12)
+let   L3_GAP_SEL     = null;
+
+function selectGap(idx) {
+  if (L3_GAP_SEL !== null) document.getElementById('gs-' + L3_GAP_SEL).classList.remove('sel-gap');
+  L3_GAP_SEL = idx;
+  document.getElementById('gs-' + idx).classList.add('sel-gap');
+  document.getElementById('l3-submit').style.display = 'block';
+}
+
+function submitL3gap() {
+  const ok = L3_GAP_SEL === L3_GAP_CORRECT;
+  for (let i = 0; i < 5; i++) {
+    const el = document.getElementById('gs-' + i);
+    el.onclick = null;
+    el.style.cursor = 'default';
+    if (i === L3_GAP_CORRECT) el.classList.add('correct-gap');
+    else if (i === L3_GAP_SEL && !ok) el.classList.add('wrong-gap');
+  }
+  showFb('l3', ok,
+    '✓ 正确！',
+    '✗ 标注有误',
+    '间隙锁覆盖查询值<strong>左右两侧最近存在值</strong>之间的开区间。id=10 左边最近是 7，右边是 12，所以间隙锁是 <strong>(7, 12)</strong>。这防止其他事务在此区间插入新行（防幻读）。',
+    `你标注的是 ${L3_GAP_LABELS[L3_GAP_SEL]}，正确范围是 <strong>(7, 12)</strong>。记住：间隙锁范围 = 查询值左右两侧<strong>最近存在的行</strong>围成的开区间，防止幻读。`
+  );
+}
+function sel(selector, el) {
+  document.querySelectorAll(selector + ' .lbtn, ' + selector + ' .gropt').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+}
+
+function submitSingle(lvl, correctKey, correctLabel, vOk, vBad, exOk, exBad) {
+  const picked = SINGLES['l' + lvl];
+  const ok = picked === correctKey;
+  const selector = `#l${lvl}-opts`;
+  document.querySelectorAll(selector + ' .lbtn, ' + selector + ' .gropt').forEach(b => {
+    const key = b.onclick?.toString().match(/pickL\d\('([^']+)'/)?.[1];
+    if (key === correctKey) b.classList.add('ok');
+    else if (key === picked && !ok) b.classList.add('bad');
+  });
+  showFb('l' + lvl, ok, vOk, vBad, exOk, exBad);
+}
+
+/* ── 关5：死锁 ── */
+let L5a = null, L5b = null;
+function pickL5a(v, el) {
+  L5a = v;
+  document.querySelectorAll('#l5a-opts .lbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  checkL5();
+  // highlight deadlock step
+  document.querySelectorAll('#l5-steps .dl-step').forEach((s, i) => {
+    s.classList.remove('highlight');
+    if (v === '4' && i === 3) s.classList.add('highlight');
+    if (v === 'both' && (i === 2 || i === 3)) s.classList.add('highlight');
+  });
+}
+function pickL5b(v, el) {
+  L5b = v;
+  document.querySelectorAll('#l5b-opts .lbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  checkL5();
+}
+function checkL5() {
+  if (L5a && L5b) document.getElementById('l5-submit').style.display = 'block';
+}
+function submitL5() {
+  const ok = L5a === '4' && L5b === 'low';
+  document.querySelectorAll('#l5a-opts .lbtn').forEach(b => {
+    const v = b.onclick.toString().match(/'([^']+)'/)?.[1];
+    if (v === '4') b.classList.add('ok'); else if (v === L5a && !ok) b.classList.add('bad');
+  });
+  document.querySelectorAll('#l5b-opts .lbtn').forEach(b => {
+    const v = b.onclick.toString().match(/'([^']+)'/)?.[1];
+    if (v === 'low') b.classList.add('ok'); else if (v === L5b && L5b !== 'low') b.classList.add('bad');
+  });
+  showFb('l5', ok, '✓ 完全正确！', '✗ 有误',
+    '死锁在<strong>第 4 步</strong>产生：此时 A 等 B 释放 id=7，B 等 A 释放 id=3，形成循环依赖。InnoDB 死锁检测后回滚<strong>持锁少（代价小）的那个事务</strong>，让另一个继续执行。',
+    '答案：死锁在<strong>第 4 步</strong>产生（B 要 id=3 而 A 持有，A 要 id=7 而 B 持有，循环等待）。InnoDB 自动检测死锁，回滚<strong>代价最小</strong>的事务（通常是持有锁最少、undo log 最少的那个）。');
+}
+</script>
+</body>
+</html>

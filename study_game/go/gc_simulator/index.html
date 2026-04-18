@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GC 三色标记模拟器 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root {
+      --accent:     #10b981;
+      --accent-dim: rgba(16, 185, 129, 0.25);
+    }
+
+    /* ── 颜色标签 ── */
+    .gc-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .gc-white-badge { background: rgba(255,255,255,0.1); border: 1px solid #888; color: #ddd; }
+    .gc-gray-badge  { background: rgba(156,163,175,0.25); border: 1px solid #9ca3af; color: #d1d5db; }
+    .gc-black-badge { background: #1f2937; border: 1px solid #4b5563; color: #9ca3af; }
+
+    /* ── 关1：拖拽分区 ── */
+    .l1-pool {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      min-height: 56px; padding: 10px;
+      border: 2px dashed var(--border);
+      border-radius: var(--r-md);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .l1-pool.drag-over { background: var(--accent-dim); border-color: var(--accent); }
+    .l1-zones { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .l1-zone {
+      border-radius: var(--r-md); padding: 10px 8px;
+      min-height: 90px; border: 2px dashed;
+      display: flex; flex-direction: column; gap: 6px;
+      transition: background 0.2s;
+    }
+    .l1-zone-label { font-size: 11px; font-weight: 700; text-align: center; margin-bottom: 4px; letter-spacing: 0.5px; }
+    .l1-zone[data-zone="white"] { border-color: #666; }
+    .l1-zone[data-zone="gray"]  { border-color: #9ca3af; }
+    .l1-zone[data-zone="black"] { border-color: #4b5563; }
+    .l1-zone.drag-over { background: var(--accent-dim); border-style: solid; border-color: var(--accent); }
+    .l1-card {
+      background: var(--surface); border: 1.5px solid var(--border);
+      border-radius: var(--r-sm); padding: 6px 10px;
+      font-size: 12px; color: var(--text-muted);
+      cursor: grab; user-select: none; transition: all 0.2s;
+    }
+    .l1-card:hover { border-color: var(--accent); color: var(--text); }
+    .l1-card.dragging { opacity: 0.35; }
+    .l1-card.correct { border-color: var(--success); background: rgba(16,185,129,0.07); cursor: default; }
+    .l1-card.wrong   { border-color: var(--danger);  background: rgba(239,68,68,0.07);  cursor: default; }
+
+    /* ── 关2：有向图 ── */
+    .graph-wrap {
+      position: relative;
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      padding: 24px 16px;
+      overflow: visible;
+    }
+    .graph-rows { display: flex; flex-direction: column; gap: 24px; align-items: center; }
+    .graph-row  { display: flex; gap: 48px; justify-content: center; }
+    .gnode {
+      width: 54px; height: 54px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 15px;
+      border: 3px solid;
+      transition: all 0.4s;
+      position: relative;
+    }
+    .gn-w { background: rgba(255,255,255,0.06); border-color: #666; color: #bbb; }
+    .gn-g { background: rgba(156,163,175,0.3); border-color: #9ca3af; color: #fff; box-shadow: 0 0 14px rgba(156,163,175,0.4); }
+    .gn-b { background: #111827; border-color: #374151; color: #4b5563; }
+    /* arrows via svg */
+    .graph-svg {
+      position: absolute; inset: 0; pointer-events: none;
+      width: 100%; height: 100%;
+    }
+    .graph-svg line { stroke: #3a3a5a; stroke-width: 2; marker-end: url(#arr); }
+    .step-seq { display: flex; flex-direction: column; gap: 8px; }
+    .step-item {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: var(--r-md);
+      font-size: 13px; color: var(--text-muted);
+      cursor: pointer; transition: all 0.2s;
+    }
+    .step-item:hover:not(.done):not(.locked) { border-color: var(--accent); color: var(--text); }
+    .step-item.active { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .step-item.done  { border-color: var(--success); color: var(--success); cursor: default; background: rgba(16,185,129,0.07); }
+    .step-item.locked { opacity: 0.4; cursor: not-allowed; }
+    .step-num {
+      width: 22px; height: 22px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; flex-shrink: 0;
+      background: var(--border); color: var(--text-dim);
+    }
+    .step-item.active .step-num { background: var(--accent); color: #fff; }
+    .step-item.done  .step-num  { background: var(--success); color: #fff; }
+
+    /* ── 关3/4：场景卡 ── */
+    .scenario {
+      background: var(--surface-alt);
+      border: 1.5px solid var(--border);
+      border-radius: var(--r-md);
+      padding: 16px;
+      margin: 8px 0;
+      transition: border-color 0.3s;
+    }
+    .scenario.correct { border-color: var(--success); }
+    .scenario.wrong   { border-color: var(--danger); }
+    .code-snip {
+      background: #0a0a14;
+      border: 1px solid #2a2a4a;
+      border-radius: var(--r-sm);
+      padding: 10px 14px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 13px;
+      color: #a78bfa; margin: 8px 0;
+    }
+    .code-snip .c-key   { color: #60a5fa; }
+    .code-snip .c-cmt   { color: #4b5563; }
+    .code-snip .c-str   { color: #10b981; }
+    .choice-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .chbtn {
+      padding: 6px 14px; border-radius: var(--r-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      color: var(--text-muted); cursor: pointer; font-size: 13px;
+      transition: all 0.2s;
+    }
+    .chbtn:hover { border-color: var(--accent); color: var(--text); }
+    .chbtn.sel  { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .chbtn.ok   { border-color: var(--success); background: rgba(16,185,129,0.1); color: var(--success); }
+    .chbtn.bad  { border-color: var(--danger);  background: rgba(239,68,68,0.1);  color: var(--danger); }
+
+    /* ── 关5：拖拽芯片时间轴 ── */
+    .gen-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .gen-table th, .gen-table td {
+      padding: 8px 6px; border: 1px solid var(--border); text-align: center;
+    }
+    .gen-table th { background: var(--surface-alt); color: var(--text-muted); font-weight: 600; }
+    .gen-table td:first-child { text-align: left; color: var(--text-muted); font-weight: 600; padding-left: 10px; }
+    .l5-palette { display: flex; gap: 10px; flex-wrap: wrap; }
+    .l5-chip {
+      padding: 5px 14px; border-radius: 20px; font-size: 13px; font-weight: 700;
+      cursor: grab; user-select: none; border: 2px solid; display: inline-block;
+      transition: opacity 0.2s;
+    }
+    .l5-chip:active { cursor: grabbing; opacity: 0.7; }
+    .l5-chip.stw { border-color: #ef4444; background: rgba(239,68,68,0.15); color: #ef4444; }
+    .l5-chip.con { border-color: #10b981; background: rgba(16,185,129,0.15); color: #10b981; }
+    .l5-chip.na  { border-color: #6b7280; background: rgba(107,114,128,0.12); color: #9ca3af; }
+    .l5-drop {
+      min-width: 60px; min-height: 34px; border-radius: 6px;
+      border: 2px dashed var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: var(--text-dim);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .l5-drop.drag-over { background: var(--accent-dim); border-color: var(--accent); border-style: solid; }
+    .l5-drop.filled { border-style: solid; }
+    .l5-placed {
+      padding: 3px 10px; border-radius: 14px; font-size: 12px; font-weight: 700;
+      cursor: pointer; border: 2px solid; transition: opacity 0.2s;
+    }
+    .l5-placed:hover { opacity: 0.65; }
+    .l5-placed.stw { border-color: #ef4444; background: rgba(239,68,68,0.15); color: #ef4444; }
+    .l5-placed.con { border-color: #10b981; background: rgba(16,185,129,0.15); color: #10b981; }
+    .l5-placed.na  { border-color: #6b7280; background: rgba(107,114,128,0.12); color: #9ca3af; }
+
+    /* ── 反馈卡片 ── */
+    .feedback-card {
+      border-radius: var(--r-md); padding: 16px 20px;
+      display: none; animation: fadeIn 0.3s ease;
+    }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+    .option-list { display: flex; flex-direction: column; gap: 8px; }
+    .option-item {
+      background: var(--surface); border: 2px solid var(--border);
+      border-radius: var(--r-md); padding: 14px 18px;
+      font-size: 14px; color: var(--text-muted); cursor: pointer; transition: all 0.2s;
+    }
+    .option-item:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
+    .option-item.selected { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); font-weight: 600; }
+  </style>
+</head>
+<body>
+
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">GC 三色标记模拟器</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">♻️</span>
+    <h1 class="game-intro__title">GC 三色标记模拟器</h1>
+    <p class="game-intro__desc">
+      扮演 Go 垃圾回收器，亲手走一遍三色标记的每个步骤。<br>
+      从颜色定义到混合写屏障，5 关循序渐进掌握 GC 面试核心。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 10 分钟</span></div>
+      <div>🎯 <span>5 关</span></div>
+      <div>✦ <span>Go GC · 写屏障 · STW</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开始 →</button>
+  </div>
+</div>
+
+
+<!-- 关1：认识三色 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:16px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 1 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">认识三色</h2>
+      <p style="color:var(--text-muted);font-size:14px;line-height:1.8;">
+        Go GC 用三种颜色标记堆对象：<br>
+        <span style="color:#ddd;">⬜ <strong>白色</strong></span>：还未被 GC 访问到<br>
+        <span style="color:#9ca3af;">◑ <strong>灰色</strong></span>：已被发现，但子节点还没全部扫描<br>
+        <span style="color:#4b5563;">⬛ <strong>黑色</strong></span>：已扫描完毕，子节点也都处理了<br><br>
+        把 9 个堆对象<strong style="color:var(--text)">拖入</strong>对应的颜色区域：
+      </p>
+    </div>
+    <div class="card" style="padding:12px 14px;">
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">📦 未分类对象池（从这里拖走）</p>
+      <div class="l1-pool" id="l1-pool"
+        ondragover="event.preventDefault();this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="l1Drop(event,null)"></div>
+    </div>
+    <div class="l1-zones">
+      <div class="l1-zone" data-zone="white" id="l1-zone-white"
+        ondragover="event.preventDefault();this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="l1Drop(event,'white')">
+        <div class="l1-zone-label" style="color:#ccc;">⬜ 白色</div>
+      </div>
+      <div class="l1-zone" data-zone="gray" id="l1-zone-gray"
+        ondragover="event.preventDefault();this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="l1Drop(event,'gray')">
+        <div class="l1-zone-label" style="color:#9ca3af;">◑ 灰色</div>
+      </div>
+      <div class="l1-zone" data-zone="black" id="l1-zone-black"
+        ondragover="event.preventDefault();this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="l1Drop(event,'black')">
+        <div class="l1-zone-label" style="color:#6b7280;">⬛ 黑色</div>
+      </div>
+    </div>
+    <div id="l1-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL1()">提交判断</button>
+    </div>
+    <div class="feedback-card" id="l1-feedback">
+      <div class="feedback-card__verdict" id="l1-verdict"></div>
+      <p class="feedback-card__explain" id="l1-explain"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关2：标记阶段走一遍 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:16px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 2 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">标记阶段走一遍</h2>
+      <p style="color:var(--text-muted);font-size:14px;line-height:1.8;">
+        按照 GC 标记步骤，依次点击按钮执行操作。<br>观察图中节点颜色的变化。
+      </p>
+    </div>
+    <div class="card">
+      <!-- 有向图 -->
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px;">对象引用图（→ 表示引用）：</p>
+      <div style="position:relative;min-height:200px;display:flex;align-items:center;justify-content:center;">
+        <svg id="graph-svg" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;">
+          <defs>
+            <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L8,3 z" fill="#3a3a5a"/>
+            </marker>
+          </defs>
+          <!-- arrows drawn by JS -->
+        </svg>
+        <div id="graph-nodes" style="display:flex;flex-direction:column;gap:32px;align-items:center;position:relative;z-index:1;">
+          <!-- nodes built by JS -->
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">按顺序点击执行 GC 步骤：</p>
+      <div class="step-seq" id="l2-steps"></div>
+    </div>
+    <div id="l2-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="completeLevel(2)">继续 →</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关3：写屏障触发 -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:16px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 3 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">写屏障触发</h2>
+      <p style="color:var(--text-muted);font-size:14px;line-height:1.8;">
+        Go 1.14+ 的<strong style="color:var(--text);">混合写屏障</strong>规则：<br>
+        • 栈对象默认视为黑色，无需写屏障<br>
+        • 堆对象被新引用时，被引用对象<strong style="color:#10b981;">变灰</strong><br>
+        • 堆对象原有引用被删除时，被删除的对象<strong style="color:#10b981;">变灰</strong><br><br>
+        判断下面 4 个场景，写屏障后对象 B 的颜色变化：
+      </p>
+    </div>
+    <div id="l3-scenarios"></div>
+    <div id="l3-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL3()">提交判断</button>
+    </div>
+    <div class="feedback-card" id="l3-feedback">
+      <div class="feedback-card__verdict" id="l3-verdict"></div>
+      <p class="feedback-card__explain" id="l3-explain"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关4：混合写屏障判断 -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:16px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 4 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">混合写屏障判断</h2>
+      <p style="color:var(--text-muted);font-size:14px;line-height:1.8;">
+        GC 并发标记期间，6 个对象操作场景。<br>
+        判断执行后，对象的<strong style="color:var(--text);">最终颜色</strong>：
+      </p>
+    </div>
+    <div id="l4-scenarios"></div>
+    <div id="l4-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL4()">提交判断</button>
+    </div>
+    <div class="feedback-card" id="l4-feedback">
+      <div class="feedback-card__verdict" id="l4-verdict"></div>
+      <p class="feedback-card__explain" id="l4-explain"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(4)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关5：三代 GC 对比 -->
+<div class="screen" id="screen-level-5">
+  <div class="fade-in" style="width:100%;max-width:620px;display:flex;flex-direction:column;gap:16px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 5 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">三代 GC 对比</h2>
+      <p style="color:var(--text-muted);font-size:14px;line-height:1.8;">
+        Go GC 经历了三个阶段的演进。把下方芯片<strong style="color:var(--text)">拖入</strong>每一代 GC 对应阶段的格子中，<br>
+        点击已放置的芯片可以清除重拖：
+      </p>
+    </div>
+    <div class="card" style="padding:14px 16px;">
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">芯片库（可重复使用，拖到表格中）：</p>
+      <div class="l5-palette">
+        <div class="l5-chip stw" draggable="true" ondragstart="event.dataTransfer.setData('l5key','stw')">⛔ STW</div>
+        <div class="l5-chip con" draggable="true" ondragstart="event.dataTransfer.setData('l5key','con')">✅ 并发</div>
+        <div class="l5-chip na"  draggable="true" ondragstart="event.dataTransfer.setData('l5key','na')">— 无此阶段</div>
+      </div>
+    </div>
+    <div class="card" style="overflow-x:auto;">
+      <table class="gen-table" id="l5-table">
+        <thead>
+          <tr>
+            <th>阶段</th>
+            <th>标记清除 GC<br><span style="font-size:11px;color:#6b7280;">Go 早期</span></th>
+            <th>三色并发 GC<br><span style="font-size:11px;color:#6b7280;">Go 1.5</span></th>
+            <th>混合写屏障 GC<br><span style="font-size:11px;color:#6b7280;">Go 1.14+</span></th>
+          </tr>
+        </thead>
+        <tbody id="l5-tbody"></tbody>
+      </table>
+    </div>
+    <div id="l5-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL5()">提交对比</button>
+    </div>
+    <div class="feedback-card" id="l5-feedback">
+      <div class="feedback-card__verdict" id="l5-verdict"></div>
+      <p class="feedback-card__explain" id="l5-explain"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(5)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">通关！</div>
+      <p class="complete-screen__desc">
+        你已掌握 Go GC 三色标记的核心机制：<br>
+        三色定义 → 标记流程 → 写屏障触发条件 → 混合写屏障判断 → 三代演进。<br>
+        面试被问到 GC，你可以侃侃而谈了。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再玩一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script src="../../game-utils.js"></script>
+<script>
+const G = { totalLevels: 5 };
+
+/* ─────────── 启动 ─────────── */
+function startGame() {
+  showScreen('level-1');
+  TopbarProgress.update({ activeIndex: 0 });
+  initL1();
+}
+
+function completeLevel(n) {
+  TopbarProgress.update({ doneUpTo: n, activeIndex: n < G.totalLevels ? n : -1 });
+  if (n < G.totalLevels) {
+    const inits = { 2: initL2, 3: initL3, 4: initL4, 5: initL5 };
+    showScreen('level-' + (n + 1));
+    if (inits[n + 1]) inits[n + 1]();
+  } else {
+    TopbarProgress.completeAll();
+    showScreen('complete');
+  }
+}
+
+function resetGame() {
+  TopbarProgress.reset();
+  showScreen('intro');
+}
+
+/* ─────────── 关1：认识三色（拖拽分区） ─────────── */
+const L1_OBJECTS = [
+  { id: 'A', desc: 'GC <b>从未访问过</b>，没有对象引用它',     ans: 'white' },
+  { id: 'B', desc: '根节点刚引用到它，<b>子节点还没扫描</b>',  ans: 'gray'  },
+  { id: 'C', desc: '已<b>完整扫描</b>，子节点均处理完毕',      ans: 'black' },
+  { id: 'D', desc: '无任何对象引用，<b>GC 尚未发现</b>',       ans: 'white' },
+  { id: 'E', desc: 'GC 刚将其加入<b>待扫描队列</b>',           ans: 'gray'  },
+  { id: 'F', desc: '已标记活跃，<b>子节点均已处理</b>',        ans: 'black' },
+  { id: 'G', desc: '被灰色对象引用，<b>本身还未被访问</b>',    ans: 'white' },
+  { id: 'H', desc: 'GC 正在扫描，<b>子节点正在被灰化</b>',    ans: 'gray'  },
+  { id: 'I', desc: '既是根对象，<b>又已完成子节点扫描</b>',    ans: 'black' },
+];
+const L1_STATE = {};
+
+function initL1() {
+  L1_OBJECTS.forEach(o => L1_STATE[o.id] = null);
+  renderL1();
+}
+
+function renderL1() {
+  const pool = document.getElementById('l1-pool');
+  pool.innerHTML = '';
+  const zones = {
+    white: document.getElementById('l1-zone-white'),
+    gray:  document.getElementById('l1-zone-gray'),
+    black: document.getElementById('l1-zone-black'),
+  };
+  ['white','gray','black'].forEach(z => zones[z].querySelectorAll('.l1-card').forEach(c => c.remove()));
+
+  L1_OBJECTS.forEach(o => {
+    const div = document.createElement('div');
+    div.className = 'l1-card';
+    div.id = 'lcard-' + o.id;
+    div.draggable = true;
+    div.innerHTML = `<strong style="color:var(--text)">对象 ${o.id}</strong><div style="font-size:11px;margin-top:2px;">${o.desc}</div>`;
+    div.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('l1id', o.id);
+      setTimeout(() => div.classList.add('dragging'), 0);
+    });
+    div.addEventListener('dragend', () => div.classList.remove('dragging'));
+    (L1_STATE[o.id] === null ? pool : zones[L1_STATE[o.id]]).appendChild(div);
+  });
+
+  const allPlaced = L1_OBJECTS.every(o => L1_STATE[o.id] !== null);
+  document.getElementById('l1-submit').style.display = allPlaced ? 'block' : 'none';
+}
+
+function l1Drop(e, zone) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  const id = e.dataTransfer.getData('l1id');
+  if (!id) return;
+  L1_STATE[id] = zone;
+  renderL1();
+}
+
+function submitL1() {
+  const colorName = { white: '⬜ 白', gray: '◑ 灰', black: '⬛ 黑' };
+  let wrong = 0;
+  L1_OBJECTS.forEach(o => {
+    const card = document.getElementById('lcard-' + o.id);
+    if (!card) return;
+    card.draggable = false;
+    if (L1_STATE[o.id] === o.ans) {
+      card.classList.add('correct');
+    } else {
+      card.classList.add('wrong');
+      wrong++;
+      card.insertAdjacentHTML('beforeend', `<div style="font-size:10px;color:var(--danger);margin-top:3px;">应为 ${colorName[o.ans]}</div>`);
+    }
+  });
+  const fb = document.getElementById('l1-feedback');
+  const ok = wrong === 0;
+  fb.className = 'feedback-card ' + (ok ? 'correct' : 'wrong');
+  document.getElementById('l1-verdict').textContent = ok ? '✓ 全部正确！' : `✗ 答错了 ${wrong} 个`;
+  document.getElementById('l1-explain').innerHTML = ok
+    ? '三色的本质是 GC 的"进度状态"：<strong>白=未发现</strong>，<strong>灰=已发现但未完成</strong>，<strong>黑=已完成</strong>。GC 结束时，所有黑色是活跃对象，仍为白色的就是垃圾，直接回收。'
+    : '看看红色边框的对象（内有正确颜色提示）。关键：灰色代表"发现但尚未完成扫描"，是 GC 并发推进的中间态。';
+  document.getElementById('l1-submit').style.display = 'none';
+  fb.style.display = 'block';
+}
+
+/* ─────────── 关2：标记阶段走一遍 ─────────── */
+// 图结构：root → A, B; A → C; B → C; C → D
+const L2_NODES = [
+  { id: 'root', label: 'Root', row: 0, col: 0 },
+  { id: 'A',    label: 'A',    row: 1, col: -1 },
+  { id: 'B',    label: 'B',    row: 1, col: 1  },
+  { id: 'C',    label: 'C',    row: 2, col: 0  },
+  { id: 'D',    label: 'D',    row: 3, col: 0  },
+];
+const L2_EDGES = [['root','A'],['root','B'],['A','C'],['B','C'],['C','D']];
+const L2_STEPS = [
+  { text: '① 扫描根节点（Root），根节点变灰', action: () => setColor('root','g') },
+  { text: '② 灰化 Root 的子节点（A、B）',    action: () => { setColor('A','g'); setColor('B','g'); } },
+  { text: '③ Root 子节点已全部灰化 → Root 变黑', action: () => setColor('root','b') },
+  { text: '④ 灰化 A 的子节点（C）',          action: () => setColor('C','g') },
+  { text: '⑤ A 子节点已全部灰化 → A 变黑',  action: () => setColor('A','b') },
+  { text: '⑥ B 的子节点 C 已经是灰色，无需重复', action: () => {} },
+  { text: '⑦ B 变黑',                       action: () => setColor('B','b') },
+  { text: '⑧ 灰化 C 的子节点（D）',         action: () => setColor('D','g') },
+  { text: '⑨ C 变黑',                       action: () => setColor('C','b') },
+  { text: '⑩ D 无子节点 → D 变黑。标记完成！', action: () => setColor('D','b') },
+];
+const L2_STATE = { colors: {}, nextStep: 0 };
+
+function initL2() {
+  L2_NODES.forEach(n => L2_STATE.colors[n.id] = 'w');
+  L2_STATE.nextStep = 0;
+  renderGraph();
+  renderSteps();
+}
+
+function setColor(id, c) {
+  L2_STATE.colors[id] = c;
+  const el = document.getElementById('gnode-' + id);
+  if (el) {
+    el.className = 'gnode gn-' + c;
+    el.textContent = id === 'root' ? 'Root' : id;
+  }
+}
+
+function renderGraph() {
+  const wrap = document.getElementById('graph-nodes');
+  // Positions: 4 rows
+  const rows = [['root'], ['A','B'], ['C'], ['D']];
+  wrap.innerHTML = rows.map((row, ri) => `
+    <div style="display:flex;gap:48px;justify-content:center;">
+      ${row.map(id => `
+        <div id="gnode-${id}" class="gnode gn-w" style="position:relative;">${id === 'root' ? 'Root' : id}</div>
+      `).join('')}
+    </div>`).join('');
+  // Draw arrows with a small SVG overlay (approximate positions)
+  // We'll do this after render with getBoundingClientRect approximation
+  // For simplicity, use descriptive text below
+}
+
+function renderSteps() {
+  const container = document.getElementById('l2-steps');
+  container.innerHTML = L2_STEPS.map((s, i) => `
+    <div class="step-item ${i === 0 ? 'active' : 'locked'}" id="lstep-${i}" onclick="execStep(${i})">
+      <div class="step-num">${i + 1}</div>
+      <div>${s.text}</div>
+    </div>`).join('');
+}
+
+function execStep(i) {
+  if (i !== L2_STATE.nextStep) return;
+  L2_STEPS[i].action();
+  const el = document.getElementById('lstep-' + i);
+  el.classList.remove('active');
+  el.classList.add('done');
+  L2_STATE.nextStep++;
+  if (L2_STATE.nextStep < L2_STEPS.length) {
+    const next = document.getElementById('lstep-' + L2_STATE.nextStep);
+    next.classList.remove('locked');
+    next.classList.add('active');
+  } else {
+    document.getElementById('l2-submit').style.display = 'block';
+  }
+}
+
+/* ─────────── 关3：写屏障触发 ─────────── */
+const L3_DATA = [
+  {
+    title: '场景 1', location: '栈对象',
+    code: `// a 是栈上变量，b 是堆对象
+a.field = b  // 混合写屏障：栈对象赋值`,
+    opts: ['B 变灰', 'B 不变色', 'B 变黑'],
+    ans: 1,
+    explain: '混合写屏障对<strong>栈对象的赋值不触发</strong>。栈对象默认当黑色处理，栈帧结束时统一扫描，赋值不需要写屏障保护。'
+  },
+  {
+    title: '场景 2', location: '堆对象，新增引用',
+    code: `// a 是堆上已分配对象（黑色），b 是白色堆对象
+a.field = b  // 混合写屏障：堆对象新增引用`,
+    opts: ['B 变灰', 'B 不变色', 'B 变黑'],
+    ans: 0,
+    explain: '堆对象新增引用时，被引用的对象（b）<strong>立即变灰</strong>，防止黑色对象引用白色对象（破坏三色不变式）。这是"插入屏障"部分。'
+  },
+  {
+    title: '场景 3', location: '堆对象，删除引用',
+    code: `// a 是堆上对象，之前 a.field = b
+// 现在删除引用
+a.field = nil  // 原来引用的 b 该怎样？`,
+    opts: ['B 变灰', 'B 不变色', 'B 变黑'],
+    ans: 0,
+    explain: '删除堆对象对 b 的引用时，b<strong>立即变灰</strong>。防止"悬空引用"：若 b 只被这一处引用，删除后 b 可能被错误回收，变灰确保本轮 GC 不回收它。'
+  },
+  {
+    title: '场景 4', location: '堆对象，黑色 → 灰色',
+    code: `// a 是已标记黑色的堆对象
+// b 是灰色堆对象
+a.field = b  // b 已经是灰色了`,
+    opts: ['B 变灰（幂等）', 'B 不变色', 'B 变黑'],
+    ans: 1,
+    explain: 'b 已经是灰色，写屏障触发后也是变灰，结果<strong>颜色不变</strong>（操作幂等）。灰色对象已经被 GC 追踪，再变一次灰没有意义，颜色保持 gray。'
+  },
+];
+const L3_STATE = {};
+
+function initL3() {
+  L3_DATA.forEach((_, i) => L3_STATE[i] = null);
+  const container = document.getElementById('l3-scenarios');
+  container.innerHTML = L3_DATA.map((d, i) => `
+    <div class="scenario" id="sc3-${i}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <span style="font-size:12px;font-weight:700;color:var(--accent)">${d.title}</span>
+        <span style="font-size:11px;color:var(--text-dim);background:var(--surface);padding:2px 8px;border-radius:4px;">${d.location}</span>
+      </div>
+      <div class="code-snip">${d.code}</div>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:6px;">写屏障执行后，B 的颜色？</p>
+      <div class="choice-row">
+        ${d.opts.map((o, j) => `<button class="chbtn" onclick="pickL3(${i},${j},this)">${o}</button>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function pickL3(si, choice, el) {
+  L3_STATE[si] = choice;
+  const sc = document.getElementById('sc3-' + si);
+  sc.querySelectorAll('.chbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  const allDone = L3_DATA.every((_, i) => L3_STATE[i] !== null);
+  document.getElementById('l3-submit').style.display = allDone ? 'block' : 'none';
+}
+
+function submitL3() {
+  let wrong = 0;
+  L3_DATA.forEach((d, i) => {
+    const sc = document.getElementById('sc3-' + i);
+    const btns = sc.querySelectorAll('.chbtn');
+    if (L3_STATE[i] === d.ans) sc.classList.add('correct');
+    else { sc.classList.add('wrong'); wrong++; }
+    btns[d.ans].classList.add('ok');
+    if (L3_STATE[i] !== d.ans) btns[L3_STATE[i]].classList.add('bad');
+  });
+  showFeedback('l3', wrong === 0,
+    wrong === 0 ? '✓ 全部正确！' : `✗ 答错了 ${wrong} 个`,
+    wrong === 0
+      ? '你已掌握混合写屏障的核心规则：<strong>栈对象赋值不触发；堆对象新增/删除引用时，被操作的对象变灰</strong>。这是保证三色不变式的关键。'
+      : '注意区分：栈上赋值不触发写屏障；只有堆对象的引用修改才触发，且被影响的对象（不是赋值目标）变灰。');
+}
+
+/* ─────────── 关4：混合写屏障判断 ─────────── */
+const L4_DATA = [
+  { title: '对象 P（栈对象）', desc: 'P 在栈上，GC 开始时是白色。GC 结束前扫描栈。', opts: ['白色','灰色','黑色'], ans: 2, explain: '栈对象在 GC 结束前会被统一扫描并标黑，最终颜色为<strong>黑色</strong>。' },
+  { title: '对象 Q（堆对象，无引用）', desc: 'Q 在堆上，GC 开始时白色，且没有任何对象引用它。', opts: ['白色','灰色','黑色'], ans: 0, explain: '无任何引用的堆对象不会被发现，GC 结束时仍是<strong>白色</strong>，会被回收（这就是垃圾）。' },
+  { title: '对象 R（堆，黑色对象新增引用）', desc: '黑色堆对象 A 新引用了白色堆对象 R（a.field = R）。', opts: ['白色','灰色','黑色'], ans: 1, explain: '混合写屏障触发插入屏障：R 立即<strong>变灰</strong>，本轮 GC 会扫描它，不会被错误回收。' },
+  { title: '对象 S（堆，引用被删除）', desc: '灰色堆对象 B 原本引用 S，现在删除该引用（b.field = nil）。', opts: ['白色','灰色','黑色'], ans: 1, explain: '混合写屏障触发删除屏障：S<strong>变灰</strong>，即便失去引用也不会被本轮 GC 回收。' },
+  { title: '对象 T（栈变量指向）', desc: '栈上变量 x 指向堆对象 T，GC 并发标记中。', opts: ['白色','灰色','黑色'], ans: 2, explain: 'GC 结束前会扫描所有栈帧，T 被根节点可达，最终<strong>变黑</strong>（存活）。' },
+  { title: '对象 U（孤岛循环引用）', desc: 'U 和 V 互相引用，但没有任何外部引用能到达它们。', opts: ['白色','灰色','黑色'], ans: 0, explain: '循环引用但无外部可达路径，U 和 V 都不会被 GC 发现，最终是<strong>白色</strong>，一起被回收。Go 三色 GC 能正确处理循环引用。' },
+];
+const L4_STATE = {};
+
+function initL4() {
+  L4_DATA.forEach((_, i) => L4_STATE[i] = null);
+  const container = document.getElementById('l4-scenarios');
+  container.innerHTML = L4_DATA.map((d, i) => `
+    <div class="scenario" id="sc4-${i}">
+      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">${d.title}</div>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">${d.desc}</p>
+      <div class="choice-row">
+        ${d.opts.map((o, j) => `<button class="chbtn" onclick="pickL4(${i},${j},this)">${o}</button>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function pickL4(si, choice, el) {
+  L4_STATE[si] = choice;
+  const sc = document.getElementById('sc4-' + si);
+  sc.querySelectorAll('.chbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  const allDone = L4_DATA.every((_, i) => L4_STATE[i] !== null);
+  document.getElementById('l4-submit').style.display = allDone ? 'block' : 'none';
+}
+
+function submitL4() {
+  let wrong = 0;
+  L4_DATA.forEach((d, i) => {
+    const sc = document.getElementById('sc4-' + i);
+    const btns = sc.querySelectorAll('.chbtn');
+    if (L4_STATE[i] === d.ans) sc.classList.add('correct');
+    else { sc.classList.add('wrong'); wrong++; }
+    btns[d.ans].classList.add('ok');
+    if (L4_STATE[i] !== d.ans) btns[L4_STATE[i]].classList.add('bad');
+  });
+  showFeedback('l4', wrong === 0,
+    wrong === 0 ? '✓ 全部正确！' : `✗ 答错了 ${wrong} 个`,
+    wrong === 0
+      ? '你已完全理解混合写屏障的颜色变化规则。记住：<strong>栈 → 黑，孤岛循环引用 → 白，堆上被写屏障保护的 → 灰</strong>。'
+      : '看看红色边框的场景，绿色按钮是正确答案。特别注意：循环引用但无外部可达路径时，三色 GC 能正确识别垃圾。');
+}
+
+/* ─────────── 关5：三代 GC 对比（拖拽芯片时间轴） ─────────── */
+const L5_PHASES = [
+  { name: '开始标记（STW）',     ans: ['stw','stw','stw'] },
+  { name: '标记根对象',          ans: ['stw','stw','stw'] },
+  { name: '堆对象标记',          ans: ['stw','con','con'] },
+  { name: '写屏障',              ans: ['na', 'con','con'] },
+  { name: '重新扫描（re-scan）', ans: ['stw','stw','na']  },
+  { name: '标记结束（STW）',     ans: ['stw','stw','stw'] },
+];
+const L5_OPTS = [
+  { key: 'stw', label: '⛔ STW' },
+  { key: 'con', label: '✅ 并发' },
+  { key: 'na',  label: '— 无'   },
+];
+const L5_STATE = {};
+
+function initL5() {
+  L5_PHASES.forEach((p, pi) =>
+    ['g1','g2','g3'].forEach(g => L5_STATE[`${pi}-${g}`] = null)
+  );
+  const tbody = document.getElementById('l5-tbody');
+  tbody.innerHTML = L5_PHASES.map((p, pi) => `
+    <tr>
+      <td>${p.name}</td>
+      ${['g1','g2','g3'].map(g => `
+        <td>
+          <div class="l5-drop" id="l5-cell-${pi}-${g}"
+            ondragover="event.preventDefault();this.classList.add('drag-over')"
+            ondragleave="this.classList.remove('drag-over')"
+            ondrop="l5Drop(event,${pi},'${g}')">拖入</div>
+        </td>`).join('')}
+    </tr>`).join('');
+}
+
+function l5Drop(e, pi, g) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  const key = e.dataTransfer.getData('l5key');
+  if (!key) return;
+  L5_STATE[`${pi}-${g}`] = key;
+  const opt = L5_OPTS.find(o => o.key === key);
+  const cell = document.getElementById(`l5-cell-${pi}-${g}`);
+  cell.innerHTML = `<span class="l5-placed ${key}" onclick="l5Clear(${pi},'${g}')" title="点击清除">${opt.label}</span>`;
+  cell.classList.add('filled');
+  const allDone = Object.values(L5_STATE).every(v => v !== null);
+  document.getElementById('l5-submit').style.display = allDone ? 'block' : 'none';
+}
+
+function l5Clear(pi, g) {
+  L5_STATE[`${pi}-${g}`] = null;
+  const cell = document.getElementById(`l5-cell-${pi}-${g}`);
+  cell.innerHTML = '拖入';
+  cell.classList.remove('filled');
+  cell.style.background = '';
+  cell.style.borderColor = '';
+  document.getElementById('l5-submit').style.display = 'none';
+}
+
+function submitL5() {
+  let wrong = 0;
+  L5_PHASES.forEach((p, pi) => {
+    ['g1','g2','g3'].forEach((g, gi) => {
+      const correct = p.ans[gi];
+      const picked  = L5_STATE[`${pi}-${g}`];
+      const cell    = document.getElementById(`l5-cell-${pi}-${g}`);
+      const opt     = L5_OPTS.find(o => o.key === correct);
+      if (picked === correct) {
+        cell.style.background   = 'rgba(16,185,129,0.1)';
+        cell.style.borderColor  = '#10b981';
+      } else {
+        wrong++;
+        cell.innerHTML = `<span class="l5-placed ${correct}" style="opacity:0.6;">✓ ${opt.label}</span>`;
+        cell.style.background  = 'rgba(239,68,68,0.08)';
+        cell.style.borderColor = '#ef4444';
+      }
+    });
+  });
+  showFeedback('l5', wrong === 0,
+    wrong === 0 ? '✓ 完全正确！' : `✗ 答错了 ${wrong} 处（红色格子已显示正确答案）`,
+    `<strong>三代演进的核心：</strong><br>
+    ① 标记清除：全程 STW，对业务影响大<br>
+    ② 三色并发：标记阶段改为并发，但 re-scan 还需 STW（因为无写屏障，并发期间对象状态可能变化）<br>
+    ③ 混合写屏障：增加写屏障后，re-scan STW 阶段被消除，只剩开始/结束两个极短 STW。这是 Go 1.14+ GC 延迟大幅降低的核心原因。`);
+}
+
+/* ─────────── 公共辅助 ─────────── */
+function showFeedback(prefix, correct, verdict, explain) {
+  const fb = document.getElementById(prefix + '-feedback');
+  fb.className = 'feedback-card ' + (correct ? 'correct' : 'wrong');
+  document.getElementById(prefix + '-verdict').textContent = verdict;
+  document.getElementById(prefix + '-explain').innerHTML = explain;
+  document.getElementById(prefix + '-submit').style.display = 'none';
+  fb.style.display = 'block';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>协程泄漏侦探 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root {
+      --accent:     #f59e0b;
+      --accent-dim: rgba(245, 158, 11, 0.25);
+    }
+    .code-block {
+      background: #0a0a14;
+      border: 1px solid #2a2a4a;
+      border-radius: var(--r-sm);
+      padding: 14px 18px;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #c8c8d4;
+      margin: 10px 0;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .code-block .ck  { color: #60a5fa; }
+    .code-block .cf  { color: #a78bfa; }
+    .code-block .cs  { color: #10b981; }
+    .code-block .cc  { color: #4b5563; font-style: italic; }
+    .code-block .chl { background: rgba(245,158,11,0.15); border-left: 3px solid #f59e0b; margin-left: -3px; padding-left: 3px; }
+    .code-block .bug { background: rgba(239,68,68,0.15); border-left: 3px solid #ef4444; margin-left: -3px; padding-left: 3px; }
+    .code-block .fix { background: rgba(16,185,129,0.12); border-left: 3px solid #10b981; margin-left: -3px; padding-left: 3px; }
+
+    /* 侦探选项 */
+    .detect-opts { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .dopt {
+      padding: 12px 16px; border-radius: var(--r-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      color: var(--text-muted); cursor: pointer; font-size: 13px;
+      text-align: left; transition: all 0.2s;
+      display: flex; align-items: flex-start; gap: 10px;
+    }
+    .dopt:hover { border-color: var(--accent); color: var(--text); }
+    .dopt.sel  { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .dopt.ok   { border-color: var(--success); background: rgba(16,185,129,0.1); color: var(--success); }
+    .dopt.bad  { border-color: var(--danger);  background: rgba(239,68,68,0.1);  color: var(--danger); }
+    .dopt-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+
+    /* context 树 */
+    .ctx-tree {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 0; padding: 20px;
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+    }
+    .ctx-node {
+      padding: 10px 20px; border-radius: var(--r-sm);
+      border: 2px solid var(--accent);
+      background: var(--surface); font-size: 13px; font-weight: 600;
+      color: var(--accent); position: relative;
+      transition: all 0.5s; cursor: pointer;
+      user-select: none;
+    }
+    .ctx-node.cancelled {
+      border-color: #4b5563; color: #4b5563;
+      background: rgba(55,65,81,0.2);
+    }
+    .ctx-node:hover:not(.cancelled) { box-shadow: 0 0 10px var(--accent-dim); }
+    .ctx-edge {
+      width: 2px; height: 24px;
+      background: var(--border); margin: 0 auto;
+    }
+    .ctx-children { display: flex; gap: 20px; }
+    .ctx-child-wrap { display: flex; flex-direction: column; align-items: center; }
+    .ctx-horiz { display: flex; align-items: flex-start; gap: 0; position: relative; }
+    .ctx-horiz-line { height: 2px; background: var(--border); }
+
+    .feedback-card {
+      border-radius: var(--r-md); padding: 16px 20px;
+      display: none; animation: fadeIn 0.3s ease;
+    }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+
+    .detective-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 20px;
+      font-size: 12px; font-weight: 700;
+      background: rgba(245,158,11,0.15); border: 1px solid var(--accent);
+      color: var(--accent); margin-bottom: 6px;
+    }
+
+    .fix-card {
+      background: rgba(16,185,129,0.08);
+      border: 1px solid rgba(16,185,129,0.3);
+      border-radius: var(--r-sm);
+      padding: 12px 16px; font-size: 13px;
+      color: var(--text-muted); line-height: 1.7;
+      margin-top: 10px;
+    }
+    .fix-card strong { color: #10b981; }
+  </style>
+</head>
+<body>
+
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">协程泄漏侦探</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">🔍</span>
+    <h1 class="game-intro__title">协程泄漏侦探</h1>
+    <p class="game-intro__desc">
+      系统报告：goroutine 数量持续增长，内存占用飙升！<br>
+      你是首席侦探，负责找出每段代码中的泄漏点，<br>
+      并选择正确的修复方案。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 10 分钟</span></div>
+      <div>🎯 <span>5 关</span></div>
+      <div>✦ <span>context · channel · 生命周期</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开始侦查 →</button>
+  </div>
+</div>
+
+
+<!-- 关1：忘记 cancel -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div class="detective-badge">🔍 案件 1 / 5</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">忘记 cancel</h2>
+      <div class="code-block"><span class="ck">func</span> <span class="cf">handleRequest</span>() {
+    ctx, _ := context.<span class="cf">WithTimeout</span>(
+        context.<span class="cf">Background</span>(), <span class="cs">5</span>*time.Second,
+    )
+    <span class="cc">// ↑ cancel 函数被丢弃！</span>
+
+    <span class="ck">go</span> <span class="cf">worker</span>(ctx)
+    <span class="cc">// ... 其他处理</span>
+}</span>
+
+<span class="ck">func</span> <span class="cf">worker</span>(ctx context.Context) {
+    <span class="ck">for</span> {
+        <span class="ck">select</span> {
+        <span class="ck">case</span> &lt;-ctx.<span class="cf">Done</span>():
+            <span class="ck">return</span>
+        <span class="ck">default</span>:
+            <span class="cf">doWork</span>()
+        }
+    }
+}</div>
+      <p style="font-size:13px;color:var(--text-muted);">这段代码的泄漏点是？</p>
+    </div>
+    <div class="card">
+      <div class="detect-opts" id="l1-opts">
+        <div class="dopt" onclick="pick1('a',this)"><span class="dopt-icon">A</span>cancel 函数被丢弃，context 相关资源（timer、goroutine）在超时前不会被释放</div>
+        <div class="dopt" onclick="pick1('b',this)"><span class="dopt-icon">B</span>worker goroutine 没有退出机制，会永远运行</div>
+        <div class="dopt" onclick="pick1('c',this)"><span class="dopt-icon">C</span>WithTimeout 已设置超时，超时后 ctx.Done() 自动触发，没有泄漏</div>
+        <div class="dopt" onclick="pick1('d',this)"><span class="dopt-icon">D</span>doWork() 函数可能阻塞，导致 goroutine 泄漏</div>
+      </div>
+      <div id="l1-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL(1,'a','✓ 找到泄漏点！','✗ 再想想','cancel 函数被丢弃会导致 context 内部的 timer goroutine 和相关资源无法提前释放。即使 goroutine 本身会在超时后退出（5秒后 ctx.Done() 触发），但每次请求都会泄漏 timer 资源直到超时。<strong>正确写法：defer cancel()</strong>，确保无论如何都能立即释放资源。','WithTimeout 生成的 cancel 函数必须调用，否则泄漏内部 timer。答案 A：cancel 函数丢弃 → 内部资源泄漏。记忆口诀：<strong>有 cancel 必须 defer cancel()</strong>。')">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div class="fix-card">
+        <strong>🔧 修复方案：</strong><br>
+        <code>ctx, cancel := context.WithTimeout(...)</code><br>
+        <code>defer cancel()  // 必须调用！</code>
+      </div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(1)">继续侦查 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关2：channel 无人关闭 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div class="detective-badge">🔍 案件 2 / 5</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">channel 无人关闭</h2>
+      <div class="code-block"><span class="ck">func</span> <span class="cf">startWorkers</span>() {
+    jobs := make(<span class="ck">chan</span> <span class="ck">int</span>)
+
+    <span class="cc">// 启动 3 个 worker</span>
+    <span class="ck">for</span> i := <span class="cs">0</span>; i &lt; <span class="cs">3</span>; i++ {
+        <span class="ck">go</span> <span class="ck">func</span>() {
+            <span class="ck">for</span> job := <span class="ck">range</span> jobs {
+                <span class="cf">process</span>(job)
+            }
+        }()
+    }
+
+    <span class="cc">// 发送任务</span>
+    <span class="ck">for</span> _, j := <span class="ck">range</span> taskList {
+        jobs &lt;- j
+    }
+    <span class="cc">// ← 发送完毕，但没有 close(jobs)</span>
+}</div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">谁应该关闭 channel？何时关闭？</p>
+      <div class="detect-opts" id="l2-opts">
+        <div class="dopt" onclick="pick2('a',this)"><span class="dopt-icon">A</span>接收方（worker goroutine）负责关闭，任务处理完后关闭</div>
+        <div class="dopt" onclick="pick2('b',this)"><span class="dopt-icon">B</span>发送方（startWorkers）负责关闭，全部任务发送完毕后 close(jobs)</div>
+        <div class="dopt" onclick="pick2('c',this)"><span class="dopt-icon">C</span>不需要关闭，goroutine 会在函数返回时自动结束</div>
+        <div class="dopt" onclick="pick2('d',this)"><span class="dopt-icon">D</span>用 sync.WaitGroup 等所有 worker 结束后关闭</div>
+      </div>
+      <div id="l2-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL(2,'b','✓ 侦查正确！','✗ 侦查有误','<strong>发送方</strong>（startWorkers）在发完所有任务后调用 close(jobs)。接收方用 range 遍历 channel，close 后 range 自动退出循环，worker goroutine 正常结束。','Go 并发原则：<strong>由发送方关闭 channel</strong>，接收方用 range 监听，close 后自动退出。接收方不知道还有没有数据要发，不应该关闭。')">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l2-fb">
+      <div class="feedback-card__verdict" id="l2-vd"></div>
+      <p class="feedback-card__explain" id="l2-ex"></p>
+      <div class="fix-card">
+        <strong>🔧 修复方案：</strong><br>
+        所有任务发送完毕后：<code>close(jobs)</code><br>
+        worker 的 <code>for job := range jobs</code> 会自动退出。
+      </div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(2)">继续侦查 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关3：WithTimeout 未感知 -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div class="detective-badge">🔍 案件 3 / 5</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">WithTimeout 未感知</h2>
+      <div class="code-block"><span class="ck">func</span> <span class="cf">fetchData</span>(ctx context.Context) {
+    ctx, cancel := context.<span class="cf">WithTimeout</span>(ctx, <span class="cs">3</span>*time.Second)
+    <span class="ck">defer</span> cancel()
+
+    <span class="ck">go</span> <span class="ck">func</span>() {
+        <span class="cc">// 内部没有监听 ctx.Done()！</span>
+        result := <span class="cf">slowDBQuery</span>()  <span class="cc">// 可能需要 10s</span>
+        resultCh &lt;- result
+    }()
+
+    <span class="ck">select</span> {
+    <span class="ck">case</span> r := &lt;-resultCh:
+        <span class="cf">handleResult</span>(r)
+    <span class="ck">case</span> &lt;-ctx.<span class="cf">Done</span>():
+        <span class="cf">log</span>.<span class="cf">Println</span>(<span class="cs">"timeout!"</span>)
+    }
+}</div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">超时后，goroutine 泄漏了吗？生命周期多长？</p>
+      <div class="detect-opts" id="l3-opts">
+        <div class="dopt" onclick="pick3('a',this)"><span class="dopt-icon">A</span>没有泄漏。fetchData 返回后，内部 goroutine 会被 GC 自动回收</div>
+        <div class="dopt" onclick="pick3('b',this)"><span class="dopt-icon">B</span>泄漏。goroutine 内没有监听 ctx.Done()，会一直运行到 slowDBQuery() 返回（可能 10s）</div>
+        <div class="dopt" onclick="pick3('c',this)"><span class="dopt-icon">C</span>泄漏。resultCh 永久阻塞，goroutine 永远不退出</div>
+        <div class="dopt" onclick="pick3('d',this)"><span class="dopt-icon">D</span>没有泄漏。ctx 超时后，goroutine 自动感知并退出</div>
+      </div>
+      <div id="l3-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL(3,'b','✓ 侦查正确！','✗ 侦查有误','context 超时只取消了等待方（select 中的 ctx.Done()），但不能强制停止已经启动的 goroutine。goroutine 内部调用 slowDBQuery() 没有监听 ctx.Done()，会继续运行直到 slowDBQuery 返回（可能 10s 后）。这期间 goroutine 泄漏。','泄漏了！goroutine 必须主动监听 ctx.Done() 才能感知取消信号。context 取消无法强制停止运行中的 goroutine。')">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div class="fix-card">
+        <strong>🔧 修复方案：</strong><br>
+        slowDBQuery 应接受 ctx 参数，内部用 <code>select { case &lt;-ctx.Done(): return }</code> 监听取消。
+        或者给 resultCh 设置缓冲（<code>make(chan T, 1)</code>），确保超时后 goroutine 能写入退出。
+      </div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(3)">继续侦查 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关4：多级取消传播 -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div class="detective-badge">🔍 案件 4 / 5</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">多级取消传播</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        下面是一个 context 树，点击任意节点取消它，<br>
+        观察哪些子节点会被取消（变灰），哪些不受影响。
+      </p>
+    </div>
+    <div class="card">
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px;">点击节点取消它（取消向下传播，不向上传播）：</p>
+      <div class="ctx-tree">
+        <!-- Root -->
+        <div id="cn-root" class="ctx-node" onclick="cancelNode('root')" title="点击取消">
+          Background ctx<br><span style="font-size:11px;opacity:0.7">（根）</span>
+        </div>
+        <div class="ctx-edge"></div>
+        <!-- Level 1 -->
+        <div class="ctx-children">
+          <div class="ctx-child-wrap">
+            <div id="cn-A" class="ctx-node" onclick="cancelNode('A')" title="点击取消">
+              ctx A<br><span style="font-size:11px;opacity:0.7">WithCancel</span>
+            </div>
+            <div class="ctx-edge"></div>
+            <!-- Level 2 under A -->
+            <div class="ctx-children">
+              <div class="ctx-child-wrap">
+                <div id="cn-A1" class="ctx-node" onclick="cancelNode('A1')">
+                  ctx A1<br><span style="font-size:11px;opacity:0.7">Goroutine</span>
+                </div>
+              </div>
+              <div style="width:20px;"></div>
+              <div class="ctx-child-wrap">
+                <div id="cn-A2" class="ctx-node" onclick="cancelNode('A2')">
+                  ctx A2<br><span style="font-size:11px;opacity:0.7">WithTimeout</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style="width:24px;"></div>
+          <div class="ctx-child-wrap">
+            <div id="cn-B" class="ctx-node" onclick="cancelNode('B')" title="点击取消">
+              ctx B<br><span style="font-size:11px;opacity:0.7">WithCancel</span>
+            </div>
+            <div class="ctx-edge"></div>
+            <div id="cn-B1" class="ctx-node" onclick="cancelNode('B1')">
+              ctx B1<br><span style="font-size:11px;opacity:0.7">Goroutine</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="l4-log" style="font-size:12px;color:var(--text-dim);margin-top:10px;min-height:40px;"></div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">取消 ctx A 后，哪些 context 会被取消？</p>
+      <div class="detect-opts" id="l4-opts">
+        <div class="dopt" onclick="pick4('a',this)"><span class="dopt-icon">A</span>只有 ctx A 本身被取消</div>
+        <div class="dopt" onclick="pick4('b',this)"><span class="dopt-icon">B</span>ctx A、A1、A2 都被取消；ctx B 和 B1 不受影响</div>
+        <div class="dopt" onclick="pick4('c',this)"><span class="dopt-icon">C</span>ctx A、A1、A2、B、B1 全部被取消</div>
+        <div class="dopt" onclick="pick4('d',this)"><span class="dopt-icon">D</span>只有 A1、A2 被取消（A 本身已经触发，不算）</div>
+      </div>
+      <div id="l4-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL(4,'b','✓ 侦查正确！','✗ 侦查有误','取消向下传播：取消 ctx A，它派生出的所有子孙 ctx（A1、A2）都被取消。ctx B 是 root 的另一个子节点，独立于 ctx A，不受影响。取消不会向上传播（不影响 root 和 B 这条分支）。','context 取消规则：<strong>向下传播，不向上，不向兄弟传播</strong>。A 的子孙（A1、A2）全部取消；B 的分支（B、B1）不受影响。')">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(4)">继续侦查 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关5：综合案例 -->
+<div class="screen" id="screen-level-5">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div class="detective-badge">🔍 最终案件 5 / 5</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">综合案例：HTTP Handler</h2>
+      <div class="code-block"><span class="ck">func</span> <span class="cf">handler</span>(w http.ResponseWriter, r *http.Request) {
+<span class="bug">    ctx, _ := context.<span class="cf">WithTimeout</span>(r.Context(), <span class="cs">2</span>*time.Second) <span class="cc">// Bug 1</span></span>
+    ch := make(<span class="ck">chan</span> string)  <span class="cc">// 无缓冲</span>
+
+    <span class="ck">go</span> <span class="ck">func</span>() {
+        result := <span class="cf">queryDB</span>(r.Context())  <span class="cc">// Bug 2: 用了原始 ctx</span>
+<span class="bug">        ch &lt;- result  <span class="cc">// Bug 3: 无缓冲，若 handler 超时退出则永久阻塞</span></span>
+    }()
+
+    <span class="ck">select</span> {
+    <span class="ck">case</span> result := &lt;-ch:
+        fmt.<span class="cf">Fprintln</span>(w, result)
+    <span class="ck">case</span> &lt;-ctx.<span class="cf">Done</span>():
+        http.<span class="cf">Error</span>(w, <span class="cs">"timeout"</span>, <span class="cs">504</span>)
+    }
+}</div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">代码中有 3 个 Bug，全选出来：</p>
+      <div id="l5-checks" style="display:flex;flex-direction:column;gap:8px;">
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px;border:1.5px solid var(--border);border-radius:var(--r-sm);font-size:13px;color:var(--text-muted);transition:border-color 0.2s;" id="chk-a">
+          <input type="checkbox" style="margin-top:2px;accent-color:var(--accent);" onchange="updateL5()">
+          <span>Bug A：cancel 函数被丢弃，内部 timer 资源泄漏</span>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px;border:1.5px solid var(--border);border-radius:var(--r-sm);font-size:13px;color:var(--text-muted);transition:border-color 0.2s;" id="chk-b">
+          <input type="checkbox" style="margin-top:2px;accent-color:var(--accent);" onchange="updateL5()">
+          <span>Bug B：queryDB 用了原始 r.Context() 而非带超时的 ctx，无法感知超时</span>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px;border:1.5px solid var(--border);border-radius:var(--r-sm);font-size:13px;color:var(--text-muted);transition:border-color 0.2s;" id="chk-c">
+          <input type="checkbox" style="margin-top:2px;accent-color:var(--accent);" onchange="updateL5()">
+          <span>Bug C：ch 是无缓冲 channel，handler 超时返回后 goroutine 永久阻塞在写入</span>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px;border:1.5px solid var(--border);border-radius:var(--r-sm);font-size:13px;color:var(--text-muted);transition:border-color 0.2s;" id="chk-d">
+          <input type="checkbox" style="margin-top:2px;accent-color:var(--accent);" onchange="updateL5()">
+          <span>Bug D：select 没有 default case，会在无数据时阻塞</span>
+        </label>
+      </div>
+      <div id="l5-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL5()">提交破案报告</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l5-fb">
+      <div class="feedback-card__verdict" id="l5-vd"></div>
+      <p class="feedback-card__explain" id="l5-ex"></p>
+      <div class="fix-card">
+        <strong>🔧 三个修复：</strong><br>
+        A: <code>ctx, cancel := ...; defer cancel()</code><br>
+        B: <code>queryDB(ctx)</code>（传入带超时的 ctx）<br>
+        C: <code>ch := make(chan string, 1)</code>（缓冲为 1，防止 goroutine 永久阻塞）
+      </div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(5)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">破案了！</div>
+      <p class="complete-screen__desc">
+        你已揪出 5 种典型 goroutine 泄漏场景：<br>
+        忘记 cancel · channel 无人关闭 · 不监听 ctx.Done() ·<br>
+        context 传播方向 · 综合 HTTP Handler。<br>
+        生产代码中，这些都是排行榜前列的内存泄漏原因。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再侦查一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script src="../../game-utils.js"></script>
+<script>
+const G = { totalLevels: 5 };
+
+function startGame() {
+  showScreen('level-1');
+  TopbarProgress.update({ activeIndex: 0 });
+}
+
+function completeLevel(n) {
+  TopbarProgress.update({ doneUpTo: n, activeIndex: n < G.totalLevels ? n : -1 });
+  if (n < G.totalLevels) {
+    showScreen('level-' + (n + 1));
+    if (n + 1 === 4) initL4();
+  } else {
+    TopbarProgress.completeAll();
+    showScreen('complete');
+  }
+}
+
+function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+
+function showFeedback(prefix, correct, verdictOk, verdictBad, explainOk, explainBad) {
+  const ok = typeof correct === 'boolean' ? correct : false;
+  const fb = document.getElementById(prefix + '-fb');
+  fb.className = 'feedback-card ' + (ok ? 'correct' : 'wrong');
+  document.getElementById(prefix + '-vd').textContent = ok ? verdictOk : verdictBad;
+  document.getElementById(prefix + '-ex').innerHTML = ok ? explainOk : explainBad;
+  document.getElementById(prefix + '-submit').style.display = 'none';
+  fb.style.display = 'block';
+}
+
+/* Generic single-choice submit */
+function submitL(n, correctKey, vOk, vBad, exOk, exBad) {
+  const state = window['L' + n + '_state'];
+  const ok = state === correctKey;
+  const opts = document.querySelectorAll('#l' + n + '-opts .dopt');
+  opts.forEach(o => {
+    const key = o.onclick.toString().match(/'(\w+)'/)?.[1];
+    if (key === correctKey) o.classList.add('ok');
+    else if (key === state && !ok) o.classList.add('bad');
+  });
+  showFeedback('l' + n, ok, vOk, vBad, exOk, exBad);
+}
+
+/* ── 关1 ── */
+window.L1_state = null;
+function pick1(v, el) {
+  window.L1_state = v;
+  document.querySelectorAll('#l1-opts .dopt').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l1-submit').style.display = 'block';
+}
+
+/* ── 关2 ── */
+window.L2_state = null;
+function pick2(v, el) {
+  window.L2_state = v;
+  document.querySelectorAll('#l2-opts .dopt').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l2-submit').style.display = 'block';
+}
+
+/* ── 关3 ── */
+window.L3_state = null;
+function pick3(v, el) {
+  window.L3_state = v;
+  document.querySelectorAll('#l3-opts .dopt').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l3-submit').style.display = 'block';
+}
+
+/* ── 关4：context 树 ── */
+window.L4_state = null;
+const CTX_TREE = {
+  root: ['A', 'B'],
+  A: ['A1', 'A2'],
+  B: ['B1'],
+  A1: [], A2: [], B1: [],
+};
+const cancelledNodes = new Set();
+let l4Locked = false;
+
+function initL4() {
+  cancelledNodes.clear();
+  l4Locked = false;
+  Object.keys(CTX_TREE).forEach(id => {
+    const el = document.getElementById('cn-' + id);
+    if (el) el.className = 'ctx-node';
+  });
+  document.getElementById('l4-log').textContent = '';
+}
+
+function cancelNode(id) {
+  if (l4Locked || cancelledNodes.has(id)) return;
+  const children = getAllDescendants(id);
+  const toCancel = [id, ...children];
+  toCancel.forEach(nid => {
+    cancelledNodes.add(nid);
+    const el = document.getElementById('cn-' + nid);
+    if (el) el.className = 'ctx-node cancelled';
+  });
+  document.getElementById('l4-log').innerHTML =
+    `取消 ctx <strong>${id}</strong> → 同时取消：${toCancel.join(', ')}`;
+  l4Locked = true;
+  document.getElementById('l4-submit').style.display = 'block';
+}
+
+function getAllDescendants(id) {
+  const kids = CTX_TREE[id] || [];
+  return kids.flatMap(k => [k, ...getAllDescendants(k)]);
+}
+
+function pick4(v, el) {
+  window.L4_state = v;
+  document.querySelectorAll('#l4-opts .dopt').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  if (l4Locked) document.getElementById('l4-submit').style.display = 'block';
+}
+
+/* ── 关5：多选 ── */
+function updateL5() {
+  const checks = document.querySelectorAll('#l5-checks input[type=checkbox]');
+  const anyChecked = Array.from(checks).some(c => c.checked);
+  document.getElementById('l5-submit').style.display = anyChecked ? 'block' : 'none';
+}
+
+function submitL5() {
+  const ids = ['a','b','c','d'];
+  const correct = new Set(['a','b','c']);
+  const picked = new Set();
+  ids.forEach(id => {
+    const lbl = document.getElementById('chk-' + id);
+    const inp = lbl.querySelector('input');
+    if (inp.checked) picked.add(id);
+  });
+  const ok = picked.size === correct.size && [...picked].every(p => correct.has(p));
+  ids.forEach(id => {
+    const lbl = document.getElementById('chk-' + id);
+    if (correct.has(id)) lbl.style.borderColor = '#10b981';
+    else if (picked.has(id)) lbl.style.borderColor = '#ef4444';
+  });
+  showFeedback('l5', ok,
+    '✓ 三个 Bug 全部找到！', '✗ 有遗漏或误判',
+    '完整识别了三个经典 HTTP Handler goroutine 泄漏模式。生产代码中这三个 Bug 经常同时出现。',
+    `正确的三个 Bug 是 A、B、C：<br>A: cancel 未调用 → timer 泄漏<br>B: 传入原始 ctx → 超时不传播<br>C: 无缓冲 channel → goroutine 永久阻塞<br>D（select 无 default）不是 Bug，在这个场景是正确的设计。`
+  );
+}
+</script>
+</body>
+</html>

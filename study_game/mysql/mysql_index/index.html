@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SQL 查询路径追踪器 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root { --accent: #7c83ff; --accent-dim: rgba(124,131,255,0.2); }
+
+    /* ── B+树 SVG 包装 ── */
+    .btree-wrap { background: #070712; border: 1px solid #2a2a4a; border-radius: var(--r-md); padding: 14px; overflow-x: auto; margin: 10px 0; }
+    .btree-node {
+      cursor: pointer; transition: all 0.2s;
+    }
+    .btree-node rect { rx: 6; ry: 6; stroke-width: 1.5; transition: all 0.2s; }
+    .btree-node.active rect { filter: drop-shadow(0 0 6px var(--accent)); }
+    .btree-node.visited rect { fill: rgba(124,131,255,0.15); stroke: #7c83ff; }
+    .btree-node.found rect   { fill: rgba(16,185,129,0.15);  stroke: #10b981; }
+    .btree-node.wrong rect   { fill: rgba(239,68,68,0.15);   stroke: #ef4444; }
+    .btree-node text { font-family: 'Monaco','Menlo',monospace; font-size: 12px; fill: #c8c8d4; pointer-events: none; }
+
+    .sql-block {
+      background: #0a0a14; border: 1px solid #2a2a4a; border-radius: var(--r-sm);
+      padding: 10px 14px; font-family: 'Monaco','Menlo',monospace; font-size: 13px;
+      color: #c8c8d4; margin: 8px 0; white-space: pre;
+    }
+    .sql-block .sk { color: #60a5fa; } .sql-block .sv { color: #10b981; } .sql-block .sc { color: #4b5563; font-style: italic; }
+
+    /* 索引覆盖判断 */
+    .cover-opts { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+    .cov-btn {
+      flex: 1; min-width: 140px; padding: 10px 14px; border-radius: var(--r-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      color: var(--text-muted); cursor: pointer; font-size: 13px;
+      text-align: center; transition: all 0.2s;
+    }
+    .cov-btn:hover { border-color: var(--accent); }
+    .cov-btn.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .cov-btn.ok  { border-color: #10b981; background: rgba(16,185,129,0.1); color: #10b981; }
+    .cov-btn.bad { border-color: #ef4444; background: rgba(239,68,68,0.1);  color: #ef4444; }
+
+    /* 表格 */
+    .idx-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+    .idx-table th { padding: 8px 12px; background: var(--surface-alt); color: var(--accent); border: 1px solid var(--border); font-weight: 700; }
+    .idx-table td { padding: 7px 12px; border: 1px solid var(--border); color: var(--text-muted); }
+    .idx-table tr:hover td { background: var(--surface-alt); }
+    .idx-table .hl { background: rgba(124,131,255,0.1); color: var(--text); font-weight: 700; }
+
+    /* 路径日志 */
+    .path-log { min-height: 30px; font-size: 12px; color: var(--text-dim); margin: 8px 0; line-height: 1.7; }
+
+    /* 公共 */
+    .opt-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+    .opt-btn {
+      padding: 9px 16px; border-radius: var(--r-sm); border: 1.5px solid var(--border);
+      background: var(--surface); color: var(--text-muted); cursor: pointer;
+      font-size: 13px; transition: all 0.2s;
+    }
+    .opt-btn:hover { border-color: var(--accent); color: var(--text); }
+    .opt-btn.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .opt-btn.ok  { border-color: #10b981; background: rgba(16,185,129,0.1); color: #10b981; }
+    .opt-btn.bad { border-color: #ef4444; background: rgba(239,68,68,0.1);  color: #ef4444; }
+
+    .feedback-card {
+      border-radius: var(--r-md); padding: 16px 20px; display: none; animation: fadeIn 0.3s;
+    }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+
+    .note-box {
+      background: rgba(124,131,255,0.07); border: 1px solid rgba(124,131,255,0.25);
+      border-radius: var(--r-sm); padding: 10px 14px;
+      font-size: 13px; color: var(--text-muted); line-height: 1.7; margin: 8px 0;
+    }
+    .note-box strong { color: var(--accent); }
+
+    /* 分析卡 */
+    .analysis-card {
+      background: var(--surface-alt); border: 1px solid var(--border);
+      border-radius: var(--r-sm); padding: 12px 14px; margin: 6px 0;
+    }
+    .analysis-card h4 { font-size: 13px; color: var(--text); margin-bottom: 6px; }
+    .analysis-card p  { font-size: 12px; color: var(--text-dim); margin: 0; line-height: 1.6; }
+  </style>
+</head>
+<body>
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">SQL 查询路径追踪器</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">🌲</span>
+    <h1 class="game-intro__title">SQL 查询路径追踪器</h1>
+    <p class="game-intro__desc">
+      你是 MySQL 查询优化器。<br>
+      在 B+ 树上点击节点走出查询路径，<br>
+      判断是否回表、哪种索引最优。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 10 分钟</span></div>
+      <div>🎯 <span>5 关</span></div>
+      <div>✦ <span>B+树 · 回表 · 覆盖索引 · 联合索引</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开始追踪 →</button>
+  </div>
+</div>
+
+<!-- 关1：B+树结构认知 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:620px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 1 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">B+ 树结构认知</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        点击 B+ 树节点，沿正确路径找到 <strong style="color:var(--text);">id = 28</strong> 的记录。<br>
+        <span style="font-size:12px;">（内部节点=路由键，叶子节点=数据行）</span>
+      </p>
+      <div class="btree-wrap">
+        <svg id="l1-svg" width="540" height="220" viewBox="0 0 540 220" style="width:100%;height:auto;"></svg>
+      </div>
+      <div class="path-log" id="l1-log">点击节点开始追踪...</div>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div class="note-box"><strong>B+ 树特点：</strong>只有叶子节点存数据行，内部节点只存键值用于路由；叶子节点之间用双向链表相连，支持范围查询；每次查询从根到叶，路径长度 = 树高。</div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关2：主键查询 vs 回表 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:620px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 2 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">主键查询 vs 回表</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        表结构：<code style="color:var(--accent);">orders(id PK, user_id, amount, status)</code><br>
+        有两个索引：<strong style="color:var(--text);">主键索引（id）</strong> 和 <strong style="color:var(--text);">二级索引（user_id）</strong>
+      </p>
+      <p style="font-size:13px;color:var(--text-muted);">以下两条 SQL，哪条需要「回表」？</p>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="sql-block"><span class="sk">SELECT</span> * <span class="sk">FROM</span> orders <span class="sk">WHERE</span> id = <span class="sv">100</span>;</div>
+        <div class="sql-block"><span class="sk">SELECT</span> * <span class="sk">FROM</span> orders <span class="sk">WHERE</span> user_id = <span class="sv">42</span>;</div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">哪条 SQL 需要回表？</p>
+      <div class="cover-opts" id="l2-opts">
+        <button class="cov-btn" onclick="pickL2('a',this)">SQL ① 需要回表<br><span style="font-size:11px;">WHERE id=100</span></button>
+        <button class="cov-btn" onclick="pickL2('b',this)">SQL ② 需要回表<br><span style="font-size:11px;">WHERE user_id=42</span></button>
+        <button class="cov-btn" onclick="pickL2('both',this)">两条都需要回表</button>
+        <button class="cov-btn" onclick="pickL2('none',this)">两条都不需要回表</button>
+      </div>
+      <div id="l2-submit" style="text-align:center;display:none;">
+        <button class="btn btn-primary" onclick="submitL2()">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l2-fb">
+      <div class="feedback-card__verdict" id="l2-vd"></div>
+      <p class="feedback-card__explain" id="l2-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(2)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关3：覆盖索引 -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:620px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 3 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">覆盖索引</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        表有联合索引 <code style="color:var(--accent);">INDEX(user_id, amount)</code>，以下 4 条查询，哪些能用覆盖索引（不回表）？
+      </p>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="sql-block"><span class="sc">-- ①</span>
+<span class="sk">SELECT</span> user_id, amount <span class="sk">FROM</span> orders <span class="sk">WHERE</span> user_id = <span class="sv">42</span>;</div>
+        <div class="sql-block"><span class="sc">-- ②</span>
+<span class="sk">SELECT</span> * <span class="sk">FROM</span> orders <span class="sk">WHERE</span> user_id = <span class="sv">42</span>;</div>
+        <div class="sql-block"><span class="sc">-- ③</span>
+<span class="sk">SELECT</span> id, user_id <span class="sk">FROM</span> orders <span class="sk">WHERE</span> user_id = <span class="sv">42</span>;</div>
+        <div class="sql-block"><span class="sc">-- ④</span>
+<span class="sk">SELECT</span> status <span class="sk">FROM</span> orders <span class="sk">WHERE</span> user_id = <span class="sv">42</span>;</div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">勾选所有能用覆盖索引（不回表）的查询：</p>
+      <div id="l3-checks" style="display:flex;flex-direction:column;gap:8px;">
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="c3-1" style="width:16px;height:16px;accent-color:var(--accent);"> ① SELECT user_id, amount
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="c3-2" style="width:16px;height:16px;accent-color:var(--accent);"> ② SELECT *
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="c3-3" style="width:16px;height:16px;accent-color:var(--accent);"> ③ SELECT id, user_id
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="c3-4" style="width:16px;height:16px;accent-color:var(--accent);"> ④ SELECT status
+        </label>
+      </div>
+      <div style="text-align:center;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL3()">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关4：联合索引最左前缀 -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:620px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 4 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">联合索引最左前缀</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        联合索引 <code style="color:var(--accent);">INDEX(a, b, c)</code>，以下哪些查询能命中该索引（至少部分使用）？
+      </p>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="sql-block"><span class="sc">-- ①</span> <span class="sk">WHERE</span> a = 1</div>
+        <div class="sql-block"><span class="sc">-- ②</span> <span class="sk">WHERE</span> b = 2</div>
+        <div class="sql-block"><span class="sc">-- ③</span> <span class="sk">WHERE</span> a = 1 <span class="sk">AND</span> c = 3</div>
+        <div class="sql-block"><span class="sc">-- ④</span> <span class="sk">WHERE</span> a = 1 <span class="sk">AND</span> b = 2</div>
+        <div class="sql-block"><span class="sc">-- ⑤</span> <span class="sk">WHERE</span> a = 1 <span class="sk">AND</span> b > 2 <span class="sk">AND</span> c = 3</div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">选出所有能命中索引的查询（多选）：</p>
+      <div style="display:flex;flex-direction:column;gap:8px;" id="l4-checks">
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="c4-1" style="width:16px;height:16px;accent-color:var(--accent);"> ① WHERE a = 1
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="c4-2" style="width:16px;height:16px;accent-color:var(--accent);"> ② WHERE b = 2
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="c4-3" style="width:16px;height:16px;accent-color:var(--accent);"> ③ WHERE a=1 AND c=3（索引部分命中）
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="c4-4" style="width:16px;height:16px;accent-color:var(--accent);"> ④ WHERE a=1 AND b=2
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="c4-5" style="width:16px;height:16px;accent-color:var(--accent);"> ⑤ WHERE a=1 AND b>2 AND c=3（b 范围后 c 失效）
+        </label>
+      </div>
+      <div style="text-align:center;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL4()">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(4)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关5：索引选型 -->
+<div class="screen" id="screen-level-5">
+  <div class="fade-in" style="width:100%;max-width:620px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 5 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">索引选型</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        表：<code style="color:var(--accent);">orders(id, user_id, status, amount, created_at)</code><br>
+        最高频的 3 种查询如下：
+      </p>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="sql-block"><span class="sc">-- 查询1（最高频）</span>
+<span class="sk">SELECT</span> id, amount <span class="sk">FROM</span> orders <span class="sk">WHERE</span> user_id=? <span class="sk">AND</span> status=?;</div>
+        <div class="sql-block"><span class="sc">-- 查询2</span>
+<span class="sk">SELECT</span> * <span class="sk">FROM</span> orders <span class="sk">WHERE</span> user_id=? <span class="sk">ORDER BY</span> created_at <span class="sk">DESC</span>;</div>
+        <div class="sql-block"><span class="sc">-- 查询3</span>
+<span class="sk">SELECT</span> <span class="sk">COUNT</span>(*) <span class="sk">FROM</span> orders <span class="sk">WHERE</span> status=?;</div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">以下 4 种索引方案，哪个最优？</p>
+      <div class="opt-row" id="l5-opts" style="flex-direction:column;">
+        <div class="opt-btn" onclick="pickL5('a',this)"><strong style="color:var(--accent);">A</strong>　INDEX(user_id)，INDEX(status)，INDEX(created_at)</div>
+        <div class="opt-btn" onclick="pickL5('b',this)"><strong style="color:var(--accent);">B</strong>　INDEX(user_id, status, amount)，INDEX(user_id, created_at)</div>
+        <div class="opt-btn" onclick="pickL5('c',this)"><strong style="color:var(--accent);">C</strong>　INDEX(status, user_id)，INDEX(created_at)</div>
+        <div class="opt-btn" onclick="pickL5('d',this)"><strong style="color:var(--accent);">D</strong>　主键 id 已经够了，不需要额外索引</div>
+      </div>
+      <div id="l5-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL5()">提交选型</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l5-fb">
+      <div class="feedback-card__verdict" id="l5-vd"></div>
+      <p class="feedback-card__explain" id="l5-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(5)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">索引通关！</div>
+      <p class="complete-screen__desc">
+        你已掌握 MySQL B+ 树索引核心：<br>
+        查询路径 · 回表原理 · 覆盖索引 ·<br>
+        最左前缀 · 索引选型。<br>
+        慢查询问题，再不用猜了。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再玩一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="../../game-utils.js"></script>
+<script>
+const G_TOTAL = 5;
+function startGame() { showScreen('level-1'); TopbarProgress.update({activeIndex:0}); initL1(); }
+function completeLevel(n) {
+  TopbarProgress.update({doneUpTo:n, activeIndex: n<G_TOTAL?n:-1});
+  if (n<G_TOTAL) showScreen('level-'+(n+1));
+  else { TopbarProgress.completeAll(); showScreen('complete'); }
+}
+function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+function showFb(prefix, ok, vOk, vBad, exOk, exBad) {
+  const fb = document.getElementById(prefix+'-fb');
+  fb.className='feedback-card '+(ok?'correct':'wrong');
+  document.getElementById(prefix+'-vd').textContent=ok?vOk:vBad;
+  document.getElementById(prefix+'-ex').innerHTML=ok?exOk:exBad;
+  const sub=document.getElementById(prefix+'-submit');
+  if(sub) sub.style.display='none';
+  fb.style.display='block';
+}
+
+/* ── 关1：B+ 树点击路径 ── */
+// Tree: root[10,20,30] → L[1,5,8,10] M1[11,15,20] M2[21,25,28,30] R[31,35]
+const L1_TREE = {
+  nodes: [
+    {id:'root', label:'10 | 20 | 30', x:200, y:20, w:130, h:32, children:['L','M1','M2','R'], isLeaf:false},
+    {id:'L',    label:'1  5  8  10', x:10,  y:110,w:110, h:32, children:[], isLeaf:true, data:false},
+    {id:'M1',   label:'11 15 20',    x:140, y:110,w:95,  h:32, children:[], isLeaf:true, data:false},
+    {id:'M2',   label:'21 25 28 30', x:255, y:110,w:120, h:32, children:[], isLeaf:true, data:true},
+    {id:'R',    label:'31 35',       x:395, y:110,w:80,  h:32, children:[], isLeaf:true, data:false},
+  ],
+  edges: [['root','L'],['root','M1'],['root','M2'],['root','R']],
+  leafLinks: [['L','M1'],['M1','M2'],['M2','R']],
+  correct: ['root','M2'],
+};
+let L1_path = [], L1_done = false;
+
+function initL1() {
+  L1_path = []; L1_done = false;
+  const svg = document.getElementById('l1-svg');
+  const {nodes, edges, leafLinks, correct} = L1_TREE;
+  let html = '';
+  // edges
+  edges.forEach(([a,b]) => {
+    const na=nodes.find(n=>n.id===a), nb=nodes.find(n=>n.id===b);
+    html+=`<line x1="${na.x+na.w/2}" y1="${na.y+na.h}" x2="${nb.x+nb.w/2}" y2="${nb.y}" stroke="#3a3a5a" stroke-width="1.5"/>`;
+  });
+  // leaf links
+  leafLinks.forEach(([a,b]) => {
+    const na=nodes.find(n=>n.id===a), nb=nodes.find(n=>n.id===b);
+    html+=`<line x1="${na.x+na.w}" y1="${na.y+na.h/2}" x2="${nb.x}" y2="${nb.y+nb.h/2}" stroke="#2a2a6a" stroke-width="1" stroke-dasharray="4,3"/>`;
+  });
+  // nodes
+  nodes.forEach(n => {
+    const fill = n.isLeaf ? '#0d0d24' : '#0a0a1e';
+    const stroke = n.isLeaf ? '#2a2a6a' : '#4a4aaa';
+    const badge = n.isLeaf ? `<rect x="${n.x+n.w-22}" y="${n.y}" width="22" height="14" fill="#1a1a3a" rx="3"/><text x="${n.x+n.w-11}" y="${n.y+10}" text-anchor="middle" font-size="9" fill="#4a4aaa">叶</text>` : '';
+    html+=`<g class="btree-node" id="bn-${n.id}" onclick="clickBNode('${n.id}')">
+      <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" fill="${fill}" stroke="${stroke}"/>
+      ${badge}
+      <text x="${n.x+n.w/2}" y="${n.y+20}" text-anchor="middle">${n.label}</text>
+    </g>`;
+  });
+  svg.innerHTML = html;
+}
+
+function clickBNode(id) {
+  if (L1_done) return;
+  const node = L1_TREE.nodes.find(n=>n.id===id);
+  // Can only click root first, then children
+  if (L1_path.length === 0 && id !== 'root') {
+    document.getElementById('l1-log').textContent='从根节点开始！';
+    return;
+  }
+  if (L1_path.includes(id)) return;
+  L1_path.push(id);
+  document.getElementById('bn-'+id).classList.add('visited');
+  document.getElementById('l1-log').textContent='路径：' + L1_path.join(' → ');
+
+  if (node.isLeaf) {
+    L1_done = true;
+    const ok = L1_path.join(',') === L1_TREE.correct.join(',');
+    document.getElementById('bn-'+id).classList.remove('visited');
+    document.getElementById('bn-'+id).classList.add(ok?'found':'wrong');
+    showFb('l1', ok,
+      '✓ 路径正确！找到 id=28',
+      '✗ 路径有误',
+      '根节点键值 [10,20,30]：28 > 20 且 28 ≤ 30，走第三个子节点（M2），叶子节点 [21,25,28,30] 中找到 28。',
+      '正确路径：root → M2（因为 20 < 28 ≤ 30，应走根节点第三指针）。B+ 树查找：在内部节点比较键值确定方向，直到叶子节点。');
+  }
+}
+
+/* ── 关2 ── */
+let L2_picked = null;
+function pickL2(v, el) {
+  L2_picked = v;
+  document.querySelectorAll('#l2-opts .cov-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l2-submit').style.display='block';
+}
+function submitL2() {
+  const ok = L2_picked === 'b';
+  document.querySelectorAll('#l2-opts .cov-btn').forEach(b => {
+    const v = b.onclick.toString().match(/'([^']+)'/)?.[1];
+    if (v==='b') b.classList.add('ok');
+    else if (v===L2_picked && !ok) b.classList.add('bad');
+  });
+  showFb('l2', ok, '✓ 正确！', '✗ 答错了',
+    '<strong>SQL①（WHERE id=100）</strong>：id 是主键，走聚簇索引，叶子节点就是完整数据行，<strong>不需要回表</strong>。<br><strong>SQL②（WHERE user_id=42）</strong>：二级索引叶子节点只存 user_id + 主键 id，SELECT * 需要所有列 → 用 id 再去聚簇索引取完整行，<strong>这就是回表</strong>。',
+    '答案：<strong>SQL②</strong> 需要回表。聚簇索引（主键）的叶子就是数据行，不需要回表；二级索引叶子只有索引列+主键，SELECT * 必须回表取其余列。');
+}
+
+/* ── 关3：覆盖索引 ── */
+function submitL3() {
+  const c1=document.getElementById('c3-1').checked;
+  const c2=document.getElementById('c3-2').checked;
+  const c3=document.getElementById('c3-3').checked;
+  const c4=document.getElementById('c3-4').checked;
+  // 正确：①③（user_id+amount 索引，id 也在叶子里）
+  const ok = c1 && !c2 && c3 && !c4;
+  showFb('l3', ok, '✓ 判断正确！', '✗ 判断有误',
+    '① SELECT user_id, amount：两列都在索引中，<strong>覆盖索引</strong>，不回表。<br>② SELECT *：需要 status 列，索引中没有，<strong>必须回表</strong>。<br>③ SELECT id, user_id：id 是主键，存在二级索引叶子中，user_id 是索引列，<strong>覆盖索引</strong>，不回表。<br>④ SELECT status：status 不在索引中，<strong>必须回表</strong>。',
+    '正确答案：<strong>①③ 覆盖索引</strong>。INDEX(user_id, amount) 叶子节点存 [user_id, amount, 主键id]，只要 SELECT 列都在这里，就不需要回表。');
+}
+
+/* ── 关4：最左前缀 ── */
+function submitL4() {
+  const c1=document.getElementById('c4-1').checked;
+  const c2=document.getElementById('c4-2').checked;
+  const c3=document.getElementById('c4-3').checked;
+  const c4=document.getElementById('c4-4').checked;
+  const c5=document.getElementById('c4-5').checked;
+  // 正确：①③④⑤（②不命中，跳过最左列a）
+  const ok = c1 && !c2 && c3 && c4 && c5;
+  showFb('l4', ok, '✓ 全部正确！', '✗ 判断有误',
+    '① WHERE a=1：命中 a，<strong>索引生效</strong>。<br>② WHERE b=2：跳过 a，<strong>索引失效</strong>（不满足最左前缀）。<br>③ WHERE a=1 AND c=3：a 命中索引，c 跳过 b 所以失效；但整体 a 部分仍命中，<strong>部分使用索引</strong>。<br>④ WHERE a=1 AND b=2：完整命中 (a,b)，<strong>索引生效</strong>。<br>⑤ WHERE a=1 AND b>2 AND c=3：a、b 命中索引，b 是范围查询后 c 索引失效；但 a+b <strong>部分命中索引</strong>。',
+    '最左前缀规则：从索引最左列开始连续匹配，跳过任意一列后续均失效。②跳过了a，索引完全失效。');
+}
+
+/* ── 关5 ── */
+let L5_picked = null;
+function pickL5(v, el) {
+  L5_picked = v;
+  document.querySelectorAll('#l5-opts .opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l5-submit').style.display='block';
+}
+function submitL5() {
+  const ok = L5_picked === 'b';
+  document.querySelectorAll('#l5-opts .opt-btn').forEach(b => {
+    const v = b.onclick.toString().match(/'([^']+)'/)?.[1];
+    if (v==='b') b.classList.add('ok');
+    else if (v===L5_picked && !ok) b.classList.add('bad');
+  });
+  showFb('l5', ok, '✓ 索引选型正确！', '✗ 选型有误',
+    '<strong>B 方案最优：</strong><br>INDEX(user_id, status, amount)：覆盖查询1（user_id+status 条件，amount 在索引中，不回表）。<br>INDEX(user_id, created_at)：覆盖查询2的排序和 user_id 过滤，避免文件排序（filesort）。<br>查询3 status 区分度低（通常只有几个值），不适合单独建索引。',
+    'B 方案是最优解。A 方案三个单列索引没有覆盖索引效果；C 方案 status 放最左不合理（区分度低）；D 方案不建索引会全表扫描。');
+}
+</script>
+</body>
+</html>

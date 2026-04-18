@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>流量风暴生存 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root {
+      --accent:     #f59e0b;
+      --accent-dim: rgba(245, 158, 11, 0.2);
+    }
+
+    /* ── 公共选项 ── */
+    .opt-grid { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .opt-btn {
+      padding: 10px 14px; border-radius: var(--r-sm); border: 1.5px solid var(--border);
+      background: var(--surface); color: var(--text-muted); cursor: pointer;
+      font-size: 13px; text-align: left; transition: all 0.2s;
+    }
+    .opt-btn:hover { border-color: var(--accent); color: var(--text); }
+    .opt-btn.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .opt-btn.ok  { border-color: #10b981; background: rgba(16,185,129,0.1); color: #10b981; }
+    .opt-btn.bad { border-color: #ef4444; background: rgba(239,68,68,0.1);  color: #ef4444; }
+    .opt-key { font-weight: 700; margin-right: 8px; }
+
+    /* ── 关1：算法卡片 ── */
+    .algo-cards { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin: 10px 0; }
+    .algo-card {
+      flex: 1; min-width: 120px; max-width: 150px;
+      background: var(--surface-alt); border: 2px solid var(--border);
+      border-radius: var(--r-md); padding: 14px 10px; text-align: center;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .algo-card:hover { border-color: var(--accent); }
+    .algo-card.sel { border-color: var(--accent); box-shadow: 0 0 12px var(--accent-dim); }
+    .algo-card.ok  { border-color: #10b981; }
+    .algo-card.bad { border-color: #ef4444; opacity: 0.6; }
+    .algo-icon { font-size: 24px; margin-bottom: 6px; }
+    .algo-name { font-size: 13px; font-weight: 700; color: var(--text); }
+    .algo-desc { font-size: 11px; color: var(--text-dim); margin-top: 4px; line-height: 1.4; }
+
+    /* ── 关2：固定窗口可视化 ── */
+    .fw-wrap { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px; margin: 10px 0; }
+    .fw-timeline { display: flex; gap: 0; align-items: flex-end; height: 90px; position: relative; border-bottom: 1px solid var(--border); }
+    .fw-bar {
+      flex: 1; border-radius: 3px 3px 0 0; min-width: 20px;
+      transition: height 0.3s, background 0.3s;
+    }
+    .fw-window-overlay {
+      position: absolute; top: 0; bottom: 0; border: 2px solid var(--accent);
+      background: rgba(245,158,11,0.08); border-radius: 4px;
+      transition: all 0.4s; pointer-events: none;
+    }
+    .fw-labels { display: flex; margin-top: 4px; }
+    .fw-label { flex: 1; text-align: center; font-size: 10px; color: var(--text-dim); }
+    .fw-slider-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+    .fw-slider-row label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+    .fw-slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
+    .fw-count-display { font-size: 20px; font-weight: 800; color: var(--accent); min-width: 40px; text-align: center; }
+
+    /* ── 关3：令牌桶计算 ── */
+    .tb-scenario {
+      background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.3);
+      border-radius: var(--r-sm); padding: 12px 16px; margin: 8px 0;
+      font-size: 13px; color: var(--text-muted); line-height: 1.8;
+    }
+    .tb-inputs { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
+    .tb-row { display: flex; align-items: center; gap: 12px; }
+    .tb-row label { font-size: 13px; color: var(--text-muted); min-width: 120px; }
+    .tb-input {
+      width: 100px; padding: 8px 12px; border-radius: var(--r-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      color: var(--text); font-size: 14px; text-align: center; transition: all 0.2s;
+    }
+    .tb-input:focus { outline: none; border-color: var(--accent); }
+    .tb-input.ok  { border-color: #10b981; color: #10b981; }
+    .tb-input.bad { border-color: #ef4444; color: #ef4444; }
+
+    /* ── 关4：熔断状态机 ── */
+    .cb-machine { display: flex; gap: 16px; justify-content: center; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+    .cb-state {
+      width: 100px; height: 80px; border-radius: var(--r-md);
+      border: 2.5px solid var(--border); background: var(--surface-alt);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      cursor: pointer; transition: all 0.3s; text-align: center;
+    }
+    .cb-state.active { box-shadow: 0 0 16px; }
+    .cb-state.closed.active  { border-color: #10b981; box-shadow: 0 0 16px rgba(16,185,129,0.4); }
+    .cb-state.open.active    { border-color: #ef4444; box-shadow: 0 0 16px rgba(239,68,68,0.4); }
+    .cb-state.halfopen.active { border-color: var(--accent); box-shadow: 0 0 16px var(--accent-dim); }
+    .cb-state .cb-icon { font-size: 20px; }
+    .cb-state .cb-name { font-size: 11px; font-weight: 700; margin-top: 4px; }
+    .cb-state.closed .cb-name  { color: #10b981; }
+    .cb-state.open .cb-name    { color: #ef4444; }
+    .cb-state.halfopen .cb-name { color: var(--accent); }
+    .cb-arrow { font-size: 20px; color: var(--text-dim); }
+    .cb-scenarios { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .cb-scenario { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-alt); font-size: 13px; }
+    .cb-err-val { font-size: 14px; font-weight: 700; color: var(--accent); min-width: 50px; }
+
+    /* ── 关5：联合滑块 ── */
+    .slider-panel { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px; margin: 10px 0; }
+    .slider-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+    .slider-row label { font-size: 12px; color: var(--text-muted); min-width: 140px; }
+    .slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
+    .slider-val { font-size: 14px; font-weight: 700; min-width: 60px; text-align: right; color: var(--accent); }
+    .live-chart { margin: 12px 0; }
+    .lc-title { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+    .lc-canvas-wrap { background: #090910; border: 1px solid #2a2a4a; border-radius: 6px; padding: 8px; }
+    .status-bar {
+      display: flex; gap: 12px; align-items: center; margin-top: 10px; flex-wrap: wrap;
+    }
+    .sb-item { font-size: 13px; color: var(--text-muted); }
+    .sb-val { font-weight: 700; margin-left: 4px; }
+    .sb-val.ok  { color: #10b981; } .sb-val.warn { color: var(--accent); } .sb-val.bad { color: #ef4444; }
+    .win-badge { display: none; margin-top: 12px; text-align: center; background: rgba(16,185,129,0.1); border: 2px solid #10b981; border-radius: var(--r-md); padding: 12px; }
+    .win-badge.show { display: block; animation: fadeIn 0.4s; }
+
+    /* ── 公共 ── */
+    .feedback-card {
+      border-radius: var(--r-md); padding: 16px 20px; display: none; animation: fadeIn 0.3s;
+    }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+  </style>
+</head>
+<body>
+
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">流量风暴生存</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">⚡</span>
+    <h1 class="game-intro__title">流量风暴生存</h1>
+    <p class="game-intro__desc">
+      流量洪峰来袭，你是系统守护者。<br>
+      选对限流算法、配好令牌桶参数、<br>
+      驾驭熔断状态机，让服务在风暴中生存。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 10 分钟</span></div>
+      <div>🎯 <span>5 关</span></div>
+      <div>✦ <span>限流算法 · 令牌桶 · 熔断 · 参数协作</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开始防守 →</button>
+  </div>
+</div>
+
+
+<!-- 关1：算法选择 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:600px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 1 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">算法选择</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">4 种常见限流算法，各有适用场景：</p>
+      <div class="algo-cards" id="l1-algos">
+        <div class="algo-card" id="ac-fixed">
+          <div class="algo-icon">📊</div>
+          <div class="algo-name">固定窗口</div>
+          <div class="algo-desc">时间切片计数，实现简单，有边界突刺</div>
+        </div>
+        <div class="algo-card" id="ac-sliding">
+          <div class="algo-icon">🔄</div>
+          <div class="algo-name">滑动窗口</div>
+          <div class="algo-desc">滚动计数，平滑，精确控制速率</div>
+        </div>
+        <div class="algo-card" id="ac-leaky">
+          <div class="algo-icon">💧</div>
+          <div class="algo-name">漏桶</div>
+          <div class="algo-desc">匀速输出，严格平滑，不允许突发</div>
+        </div>
+        <div class="algo-card" id="ac-token">
+          <div class="algo-icon">🪙</div>
+          <div class="algo-name">令牌桶</div>
+          <div class="algo-desc">预积累令牌，支持突发，常用首选</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">以下 3 个场景，各选最合适的限流算法：</p>
+      <div id="l1-scenarios"></div>
+      <div id="l1-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL1()">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关2：固定窗口边界问题 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:560px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 2 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">固定窗口边界问题</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        固定窗口限流：每秒最多 <strong style="color:var(--text);">5 个请求</strong>。<br>
+        但在窗口切换时刻，可能出现 <strong style="color:var(--text);">2 倍流量突刺</strong>。<br>
+        拖动时间窗口，观察 1 秒内实际通过多少请求：
+      </p>
+    </div>
+    <div class="card">
+      <div class="fw-wrap">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">每格代表 0.5 秒，颜色越深表示请求越多（上限 5/窗口）</div>
+        <div class="fw-timeline" id="l2-timeline"></div>
+        <div class="fw-labels" id="l2-labels"></div>
+        <div id="l2-window-overlay" class="fw-window-overlay"></div>
+      </div>
+      <div class="fw-slider-row">
+        <label>移动观察窗口：</label>
+        <input type="range" id="l2-slider" min="0" max="8" value="0" oninput="updateFW()">
+        <div class="fw-count-display" id="l2-count">0</div>
+        <span style="font-size:12px;color:var(--text-dim);">/秒</span>
+      </div>
+      <div id="l2-note" style="font-size:12px;color:var(--text-dim);margin-top:6px;line-height:1.6;"></div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">在窗口边界处，1 秒内最多能通过多少请求？</p>
+      <div class="opt-grid" id="l2-opts">
+        <div class="opt-btn" onclick="pickOpt('l2','5',this)"><span class="opt-key">A</span>5 个，和设定值一样</div>
+        <div class="opt-btn" onclick="pickOpt('l2','8',this)"><span class="opt-key">B</span>8 个，有一点突刺</div>
+        <div class="opt-btn" onclick="pickOpt('l2','10',this)"><span class="opt-key">C</span>10 个，正好 2 倍流量</div>
+        <div class="opt-btn" onclick="pickOpt('l2','unlimited',this)"><span class="opt-key">D</span>无限，完全失控</div>
+      </div>
+      <div id="l2-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitSingle('2','10','✅ 正确！','✗ 答错了','在窗口 N 结束前 0.5 秒打入 5 个，窗口 N+1 开始后 0.5 秒又打入 5 个，合计 <strong>10 个请求</strong>在 1 秒内通过。这就是固定窗口的边界突刺问题，滑动窗口就是为了解决这个问题而生的。','固定窗口的致命弱点：窗口边界处 1 秒内实际可以通过 <strong>2 倍（10 个）</strong>请求。窗口 N 末 5 个 + 窗口 N+1 初 5 个 = 10 个全部合法通过。')">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l2-fb">
+      <div class="feedback-card__verdict" id="l2-vd"></div>
+      <p class="feedback-card__explain" id="l2-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(2)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关3：令牌桶配置 -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:560px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 3 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">令牌桶参数配置</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        根据业务需求，配置令牌桶参数：
+      </p>
+      <div class="tb-scenario">
+        🎯 <strong style="color:var(--text);">业务需求：</strong><br>
+        • 平均 QPS 上限：<strong style="color:var(--accent);">100 req/s</strong><br>
+        • 允许突发系数：<strong style="color:var(--accent);">3 倍</strong>（短时间可以承受 3× 流量）<br>
+        • 令牌填充必须在 <strong style="color:var(--accent);">1 秒内</strong> 注满（突发后快速恢复）
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">计算正确的令牌桶参数：</p>
+      <div class="tb-inputs">
+        <div class="tb-row">
+          <label>桶容量（令牌上限）</label>
+          <input class="tb-input" id="tb-cap" type="number" placeholder="?" min="1">
+          <span style="font-size:12px;color:var(--text-dim);">个令牌</span>
+        </div>
+        <div class="tb-row">
+          <label>填充速率</label>
+          <input class="tb-input" id="tb-rate" type="number" placeholder="?" min="1">
+          <span style="font-size:12px;color:var(--text-dim);">令牌/秒</span>
+        </div>
+      </div>
+      <div id="l3-hint" style="font-size:12px;color:var(--text-dim);margin-top:6px;line-height:1.6;">
+        提示：桶容量 = 平均 QPS × 突发系数；填充速率 = 平均 QPS
+      </div>
+      <div id="l3-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL3()">提交配置</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关4：熔断三态 -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:560px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 4 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">熔断三态</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        熔断器有三个状态，通过错误率触发转换：
+      </p>
+      <div class="cb-machine">
+        <div class="cb-state closed active" id="cb-closed">
+          <div class="cb-icon">✅</div>
+          <div class="cb-name">Closed<br>（正常）</div>
+        </div>
+        <div class="cb-arrow">⇄</div>
+        <div class="cb-state halfopen" id="cb-halfopen">
+          <div class="cb-icon">🔆</div>
+          <div class="cb-name">Half-Open<br>（探测）</div>
+        </div>
+        <div class="cb-arrow">⇄</div>
+        <div class="cb-state open" id="cb-open">
+          <div class="cb-icon">🚫</div>
+          <div class="cb-name">Open<br>（熔断）</div>
+        </div>
+      </div>
+      <p style="font-size:13px;color:var(--text-muted);">规则：错误率 ≥ 50% 触发熔断（→ Open）；超时后进入探测（Half-Open）；探测成功回 Closed，失败回 Open。</p>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">根据以下场景，判断熔断器应处于什么状态：</p>
+      <div class="cb-scenarios" id="l4-scenarios"></div>
+      <div id="l4-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL4()">提交判断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(4)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关5：联合使用 -->
+<div class="screen" id="screen-level-5">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 5 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">联合防守</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        流量洪峰来袭！调整限流阈值和熔断触发错误率，让系统 QPS 和错误率同时落在安全区内才算通关。
+      </p>
+    </div>
+    <div class="card">
+      <div class="slider-panel">
+        <div class="slider-row">
+          <label>限流阈值 QPS：</label>
+          <input type="range" id="sl-ratelimit" min="50" max="400" value="200" step="10" oninput="updateL5()">
+          <span class="slider-val" id="sl-rl-val">200</span>
+        </div>
+        <div class="slider-row">
+          <label>熔断错误率阈值：</label>
+          <input type="range" id="sl-errthresh" min="10" max="80" value="50" step="5" oninput="updateL5()">
+          <span class="slider-val" id="sl-err-val">50%</span>
+        </div>
+      </div>
+      <div class="live-chart">
+        <div class="lc-title">实时系统监控（模拟 20 个时间片）</div>
+        <div class="lc-canvas-wrap">
+          <canvas id="l5-canvas" width="520" height="150" style="width:100%;height:150px;"></canvas>
+        </div>
+      </div>
+      <div class="status-bar">
+        <div class="sb-item">当前 QPS：<span class="sb-val" id="sb-qps">-</span></div>
+        <div class="sb-item">错误率：<span class="sb-val" id="sb-err">-</span></div>
+        <div class="sb-item">状态：<span class="sb-val" id="sb-status">-</span></div>
+      </div>
+      <div class="win-badge" id="l5-win">
+        <div style="font-size:20px;font-weight:800;color:#10b981;margin-bottom:6px;">🛡 系统稳定！通关！</div>
+        <div style="font-size:13px;color:var(--text-muted);">QPS 已限流到安全范围，错误率受控。</div>
+        <div style="margin-top:12px;"><button class="btn btn-primary" onclick="completeLevel(5)">查看通关 →</button></div>
+      </div>
+    </div>
+    <div style="background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.25);border-radius:var(--r-sm);padding:10px 14px;font-size:13px;color:var(--text-muted);line-height:1.7;">
+      通关条件：<strong style="color:var(--accent);">峰值 QPS ≤ 250</strong> 且 <strong style="color:var(--accent);">峰值错误率 ≤ 5%</strong><br>
+      系统原始峰值：QPS=500，错误率可达 40%
+    </div>
+  </div>
+</div>
+
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">系统幸存！</div>
+      <p class="complete-screen__desc">
+        你已掌握流量防御全套武器：<br>
+        4 种限流算法选型 · 固定窗口边界突刺 ·<br>
+        令牌桶参数计算 · 熔断三态转换 · 限流+熔断协作。<br>
+        面对流量洪峰，稳如磐石。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再玩一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script src="../../game-utils.js"></script>
+<script>
+const G_TOTAL = 5;
+function startGame() {
+  showScreen('level-1');
+  TopbarProgress.update({ activeIndex: 0 });
+  initL1(); initL2(); initL4(); initL5();
+}
+function completeLevel(n) {
+  TopbarProgress.update({ doneUpTo: n, activeIndex: n < G_TOTAL ? n : -1 });
+  if (n < G_TOTAL) showScreen('level-' + (n + 1));
+  else { TopbarProgress.completeAll(); showScreen('complete'); }
+}
+function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+
+function showFb(prefix, ok, vOk, vBad, exOk, exBad) {
+  const fb = document.getElementById(prefix + '-fb');
+  fb.className = 'feedback-card ' + (ok ? 'correct' : 'wrong');
+  document.getElementById(prefix + '-vd').textContent = ok ? vOk : vBad;
+  document.getElementById(prefix + '-ex').innerHTML = ok ? exOk : exBad;
+  const sub = document.getElementById(prefix + '-submit');
+  if (sub) sub.style.display = 'none';
+  fb.style.display = 'block';
+}
+
+const OPTS = {};
+function pickOpt(lvl, val, el) {
+  OPTS[lvl] = val;
+  const container = el.parentElement;
+  container.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  const subId = 'l' + lvl.replace('l','') + '-submit';
+  const sub = document.getElementById(lvl + '-submit') || document.getElementById(subId);
+  if (sub) sub.style.display = 'block';
+}
+
+function submitSingle(lvl, correct, vOk, vBad, exOk, exBad) {
+  const picked = OPTS['l' + lvl];
+  const ok = picked === correct;
+  const container = document.getElementById('l' + lvl + '-opts');
+  container.querySelectorAll('.opt-btn').forEach(b => {
+    const v = b.onclick.toString().match(/pickOpt\('[^']+','([^']+)'/)?.[1];
+    if (v === correct) b.classList.add('ok');
+    else if (v === picked && !ok) b.classList.add('bad');
+  });
+  showFb('l' + lvl, ok, vOk, vBad, exOk, exBad);
+}
+
+/* ── 关1 ── */
+const L1_SCEN = [
+  { text: '视频转码 API：处理耗时，要求绝对匀速，不允许突发', ans: 'leaky', explain: '漏桶：严格匀速输出，完全不允许突发，适合需要严格速率的场景。' },
+  { text: '电商秒杀：平时请求少，活动瞬间 10 倍流量，需支持短时突发', ans: 'token', explain: '令牌桶：可以积攒令牌支持突发，这是最常用的选择。' },
+  { text: '简单计数：每分钟 API 调用不超过 60 次，实现越简单越好', ans: 'fixed', explain: '固定窗口：实现最简单，精度不高但对这个场景够用。' },
+];
+const L1_STATE = {};
+
+function initL1() {
+  L1_SCEN.forEach((_, i) => L1_STATE[i] = null);
+  document.getElementById('l1-scenarios').innerHTML = L1_SCEN.map((s, i) => `
+    <div style="margin-bottom:14px;">
+      <p style="font-size:13px;color:var(--text);margin-bottom:8px;">场景 ${i+1}：${s.text}</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${[['fixed','固定窗口'],['sliding','滑动窗口'],['leaky','漏桶'],['token','令牌桶']].map(([k,n]) =>
+          `<button class="opt-btn" style="flex:1;min-width:100px;" onclick="pickL1(${i},'${k}',this)">${n}</button>`).join('')}
+      </div>
+    </div>`).join('');
+  document.getElementById('l3-cap').addEventListener('input', checkL3Inputs);
+  document.getElementById('tb-cap').addEventListener('input', checkL3Form);
+  document.getElementById('tb-rate').addEventListener('input', checkL3Form);
+}
+
+function pickL1(i, k, el) {
+  L1_STATE[i] = k;
+  el.closest('div').querySelectorAll('.opt-btn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  if (L1_SCEN.every((_, j) => L1_STATE[j])) document.getElementById('l1-submit').style.display = 'block';
+}
+
+function submitL1() {
+  let wrong = 0;
+  L1_SCEN.forEach((s, i) => {
+    const picked = L1_STATE[i];
+    const container = document.getElementById('l1-scenarios').children[i].querySelector('div');
+    container.querySelectorAll('.opt-btn').forEach(b => {
+      const v = b.onclick.toString().match(/'([a-z]+)'/g)?.[1]?.replace(/'/g,'');
+      if (v === s.ans) b.classList.add('ok');
+      else if (v === picked && picked !== s.ans) b.classList.add('bad');
+    });
+    if (picked !== s.ans) wrong++;
+  });
+  showFb('l1', wrong === 0, '✓ 全部选对！', `✗ 答错 ${wrong} 个`,
+    '4 种算法特点：固定窗口（简单，有边界突刺）→ 滑动窗口（精确，无突刺）→ 漏桶（严格匀速）→ 令牌桶（支持突发，最常用）。',
+    L1_SCEN.filter((s, i) => L1_STATE[i] !== s.ans).map(s => s.explain).join('<br>'));
+}
+
+/* ── 关2：固定窗口可视化 ── */
+const FW_BARS = [5, 2, 5, 1, 5, 0, 4, 5, 3, 5]; // 请求量 per 0.5s
+function initL2() {
+  const tl = document.getElementById('l2-timeline');
+  const lbls = document.getElementById('l2-labels');
+  tl.innerHTML = FW_BARS.map((v, i) => {
+    const pct = (v / 5) * 100;
+    const col = v >= 5 ? '#ef4444' : v >= 4 ? '#f59e0b' : '#7c83ff';
+    return `<div class="fw-bar" style="height:${pct}%;background:${col};" id="fwb-${i}" title="${v}个请求"></div>`;
+  }).join('');
+  lbls.innerHTML = FW_BARS.map((_, i) => `<div class="fw-label">${i * 0.5}s</div>`).join('');
+  updateFW();
+}
+
+function updateFW() {
+  const pos = parseInt(document.getElementById('l2-slider').value);
+  const barW = 100 / FW_BARS.length;
+  const overlay = document.getElementById('l2-window-overlay');
+  overlay.style.left = (pos * barW) + '%';
+  overlay.style.width = (2 * barW) + '%'; // 1 second = 2 bars of 0.5s
+
+  const total = FW_BARS[pos] + (FW_BARS[pos + 1] || 0);
+  document.getElementById('l2-count').textContent = total;
+  document.getElementById('l2-count').style.color = total > 5 ? '#ef4444' : '#10b981';
+
+  let note = `观察窗口 [${pos * 0.5}s, ${(pos + 2) * 0.5}s)：共 ${total} 个请求通过`;
+  if (total > 5) note += ` ⚠️ 超过限流阈值 5！`;
+  document.getElementById('l2-note').textContent = note;
+}
+
+/* ── 关3：令牌桶 ── */
+function checkL3Form() {
+  const cap = document.getElementById('tb-cap').value;
+  const rate = document.getElementById('tb-rate').value;
+  document.getElementById('l3-submit').style.display = (cap && rate) ? 'block' : 'none';
+}
+function checkL3Inputs() {}
+
+function submitL3() {
+  const cap  = parseInt(document.getElementById('tb-cap').value);
+  const rate = parseInt(document.getElementById('tb-rate').value);
+  const okCap  = cap === 300;
+  const okRate = rate === 100;
+  document.getElementById('tb-cap').classList.toggle('ok', okCap);
+  document.getElementById('tb-cap').classList.toggle('bad', !okCap);
+  document.getElementById('tb-rate').classList.toggle('ok', okRate);
+  document.getElementById('tb-rate').classList.toggle('bad', !okRate);
+  const ok = okCap && okRate;
+  showFb('l3', ok, '✓ 配置正确！', '✗ 配置有误',
+    '桶容量 = 100 × 3 = <strong>300</strong>；填充速率 = 平均 QPS = <strong>100 令牌/秒</strong>。桶容量决定能承受的最大突发量，速率决定恢复速度。',
+    `正确配置：桶容量 = <strong>300</strong>（100 QPS × 3 倍突发），填充速率 = <strong>100</strong> 令牌/秒。${!okCap ? '你的桶容量 ' + cap + ' 不对；' : ''}${!okRate ? '填充速率 ' + rate + ' 不对。' : ''}`);
+}
+
+/* ── 关4：熔断三态 ── */
+const L4_SCENARIOS = [
+  { err: '5%',  ans: 'closed',   label: '系统刚启动，错误率 5%，运行正常', },
+  { err: '65%', ans: 'open',     label: '上游服务超时，错误率飙升到 65%', },
+  { err: '0%',  ans: 'halfopen', label: '熔断 30s 后，放入一个探测请求，该请求成功', extra: '（此时状态是？）' },
+  { err: '80%', ans: 'open',     label: '探测请求失败，错误率仍然 80%', },
+];
+const L4_STATE = {};
+
+function initL4() {
+  L4_SCENARIOS.forEach((_, i) => L4_STATE[i] = null);
+  document.getElementById('l4-scenarios').innerHTML = L4_SCENARIOS.map((s, i) => `
+    <div class="cb-scenario">
+      <div class="cb-err-val">${s.err}</div>
+      <div style="flex:1;font-size:13px;color:var(--text-muted);">${s.label}</div>
+      <div style="display:flex;gap:6px;">
+        ${[['closed','✅ Closed'],['halfopen','🔆 Half'],['open','🚫 Open']].map(([k,n]) =>
+          `<button class="opt-btn" style="padding:5px 10px;font-size:11px;" id="l4c-${i}-${k}" onclick="pickL4(${i},'${k}',this)">${n}</button>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function pickL4(i, k, el) {
+  L4_STATE[i] = k;
+  const row = document.getElementById(`l4c-${i}-closed`).closest('.cb-scenario');
+  row.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  // highlight state machine
+  const stateMap = { 'closed': 'cb-closed', 'open': 'cb-open', 'halfopen': 'cb-halfopen' };
+  Object.values(stateMap).forEach(id => document.getElementById(id).classList.remove('active'));
+  document.getElementById(stateMap[k]).classList.add('active');
+  if (L4_SCENARIOS.every((_, j) => L4_STATE[j])) document.getElementById('l4-submit').style.display = 'block';
+}
+
+function submitL4() {
+  let wrong = 0;
+  L4_SCENARIOS.forEach((s, i) => {
+    ['closed','halfopen','open'].forEach(k => {
+      const btn = document.getElementById(`l4c-${i}-${k}`);
+      if (k === s.ans) btn.classList.add('ok');
+      else if (k === L4_STATE[i] && L4_STATE[i] !== s.ans) btn.classList.add('bad');
+    });
+    if (L4_STATE[i] !== s.ans) wrong++;
+  });
+  showFb('l4', wrong === 0, '✓ 状态转换正确！', `✗ 答错 ${wrong} 个`,
+    '熔断三态：Closed（正常）→ Open（熔断，错误率 ≥ 阈值）→ Half-Open（探测，等待超时后）→ Closed（探测成功）或 Open（探测失败）。Half-Open 是关键的恢复探测阶段。',
+    '关键：Half-Open 是在 Open 等待超时后自动进入的探测状态，不是"错误率降低就进入"。探测成功回 Closed，失败回 Open。');
+}
+
+/* ── 关5：联合滑块 ── */
+const RAW_QPS = [80, 120, 200, 350, 500, 480, 400, 320, 250, 200, 180, 300, 450, 500, 460, 350, 250, 150, 100, 80];
+const RAW_ERR = [1, 1, 2, 5, 40, 38, 30, 20, 10, 5, 3, 15, 35, 40, 38, 25, 10, 3, 1, 1];
+let L5_won = false;
+
+function initL5() { updateL5(); }
+
+function updateL5() {
+  const rlLimit = parseInt(document.getElementById('sl-ratelimit').value);
+  const errThresh = parseInt(document.getElementById('sl-errthresh').value);
+  document.getElementById('sl-rl-val').textContent = rlLimit;
+  document.getElementById('sl-err-val').textContent = errThresh + '%';
+
+  const canvas = document.getElementById('l5-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const safeQPS = 250, safeErr = 5;
+
+  // Compute limited values
+  const limitedQPS = RAW_QPS.map(q => Math.min(q, rlLimit));
+  const limitedErr = RAW_QPS.map((q, i) => {
+    const limited = Math.min(q, rlLimit);
+    const ratioServed = limited / q;
+    const baseErr = RAW_ERR[i];
+    // when rate limit cuts traffic, fewer overload errors
+    const adjustedErr = baseErr * ratioServed;
+    return adjustedErr >= errThresh ? Math.min(adjustedErr * 0.3, 4) : adjustedErr;
+  });
+
+  const maxQPS = 600, maxErr = 50;
+  const n = RAW_QPS.length;
+  const padL = 40, padR = 10, padT = 10, padB = 20;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+
+  function drawLine(data, maxVal, color, label) {
+    ctx.beginPath();
+    ctx.strokeStyle = color; ctx.lineWidth = 2;
+    data.forEach((v, i) => {
+      const x = padL + (i / (n - 1)) * chartW;
+      const y = padT + chartH - (v / maxVal) * chartH;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  function drawThreshold(val, maxVal, color, labelText) {
+    const y = padT + chartH - (val / maxVal) * chartH;
+    ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+    ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = color; ctx.font = '10px sans-serif';
+    ctx.fillText(labelText, padL + 2, y - 3);
+  }
+
+  // Grid
+  ctx.strokeStyle = '#2a2a4a'; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + (i / 4) * chartH;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+  }
+
+  // Thresholds
+  drawThreshold(safeQPS, maxQPS, '#10b981', 'QPS≤250 安全线');
+  drawThreshold(safeErr, maxErr, '#7c83ff', 'ERR≤5% 安全线');
+
+  // Actual curves
+  drawLine(limitedQPS.map(q => q / maxQPS * maxQPS), maxQPS, '#f59e0b', 'QPS');
+  drawLine(limitedErr.map(e => e / maxErr * maxErr), maxErr, '#ef4444', 'ERR%');
+
+  // Axes
+  ctx.fillStyle = '#4b5563'; ctx.font = '10px sans-serif';
+  ctx.fillText('0', padL - 12, H - padB + 4);
+  ctx.fillText('QPS →', padL + chartW - 20, H - 2);
+
+  // Status
+  const peakQPS = Math.max(...limitedQPS);
+  const peakErr = Math.max(...limitedErr);
+  const qpsOk = peakQPS <= safeQPS;
+  const errOk = peakErr <= safeErr;
+
+  document.getElementById('sb-qps').textContent = Math.round(peakQPS) + ' (峰值)';
+  document.getElementById('sb-qps').className = 'sb-val ' + (qpsOk ? 'ok' : 'bad');
+  document.getElementById('sb-err').textContent = peakErr.toFixed(1) + '% (峰值)';
+  document.getElementById('sb-err').className = 'sb-val ' + (errOk ? 'ok' : 'bad');
+
+  const allOk = qpsOk && errOk;
+  document.getElementById('sb-status').textContent = allOk ? '✓ 系统稳定' : (qpsOk ? '⚠ 错误率超标' : '🚫 QPS 超标');
+  document.getElementById('sb-status').className = 'sb-val ' + (allOk ? 'ok' : 'bad');
+
+  if (allOk && !L5_won) {
+    L5_won = true;
+    document.getElementById('l5-win').classList.add('show');
+  }
+  if (!allOk && L5_won) {
+    L5_won = false;
+    document.getElementById('l5-win').classList.remove('show');
+  }
+}
+
+// Fix: initL1 references l3-cap, update to use tb-cap
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('tb-cap').addEventListener('input', checkL3Form);
+  document.getElementById('tb-rate').addEventListener('input', checkL3Form);
+});
+</script>
+</body>
+</html>

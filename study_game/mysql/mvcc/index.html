@@ -1,0 +1,2052 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MVCC 闯关游戏 - 从零理解多版本并发控制</title>
+    <link rel="stylesheet" href="../../shared.css">
+    <style>
+    :root {
+      --accent:     #7c83ff;
+      --accent-dim: rgba(124, 131, 255, 0.25);
+    }
+        /* reset / body → shared.css */
+        body { padding-top: 0; }
+        #app {
+            max-width: 900px;
+            width: 100%;
+            padding: 20px;
+        }
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 20px 0;
+        }
+        .header h1 {
+            font-size: 28px;
+            color: #7c83ff;
+            margin-bottom: 8px;
+        }
+        .header .subtitle {
+            color: #888;
+            font-size: 14px;
+        }
+        /* progress-bar / progress-dot → topbar dots 替代，不再内联 */
+        /* Cards */
+        .card { margin: 16px 0; }
+        .card h2 {
+            font-size: 20px;
+            color: #7c83ff;
+            margin-bottom: 6px;
+        }
+        .card h3 {
+            font-size: 16px;
+            color: #ccc;
+            margin-bottom: 16px;
+            font-weight: normal;
+        }
+        .card p, .card li {
+            line-height: 1.8;
+            color: #bbb;
+            font-size: 15px;
+        }
+        /* Buttons */
+        .btn {
+            display: inline-block;
+            padding: 10px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .btn-primary {
+            background: #7c83ff;
+            color: white;
+        }
+        .btn-primary:hover { background: #6a70e6; }
+        .btn-success {
+            background: #4ecca3;
+            color: #111;
+        }
+        .btn-success:hover { background: #3db890; }
+        .btn-danger {
+            background: #e94560;
+            color: white;
+        }
+        .btn-danger:hover { background: #d13550; }
+        .btn-outline {
+            background: transparent;
+            border: 2px solid #7c83ff;
+            color: #7c83ff;
+        }
+        .btn-outline:hover { background: #7c83ff22; }
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+        /* Version Chain */
+        .chain-container {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            overflow-x: auto;
+            padding: 16px 0;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .chain-node {
+            background: #16213e;
+            border: 2px solid #0f3460;
+            border-radius: 10px;
+            padding: 12px 16px;
+            min-width: 130px;
+            text-align: center;
+            transition: all 0.3s;
+            cursor: default;
+            position: relative;
+        }
+        .chain-node.clickable {
+            cursor: pointer;
+        }
+        .chain-node.clickable:hover {
+            border-color: #7c83ff;
+            transform: translateY(-2px);
+        }
+        .chain-node.active {
+            border-color: #7c83ff;
+            box-shadow: 0 0 15px #7c83ff44;
+        }
+        .chain-node.visible-yes {
+            border-color: #4ecca3;
+            background: #4ecca322;
+        }
+        .chain-node.visible-no {
+            border-color: #e94560;
+            background: #e9456022;
+            opacity: 0.6;
+        }
+        .chain-node.highlight {
+            border-color: #f39c12;
+            box-shadow: 0 0 20px #f39c1244;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 10px #f39c1244; }
+            50% { box-shadow: 0 0 25px #f39c1266; }
+        }
+        .chain-node .trx-label {
+            font-size: 12px;
+            color: #7c83ff;
+            margin-bottom: 4px;
+        }
+        .chain-node .data-label {
+            font-size: 15px;
+            font-weight: bold;
+            color: #eee;
+        }
+        .chain-node .badge {
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+        .badge-yes { background: #4ecca3; color: #111; }
+        .badge-no { background: #e94560; color: white; }
+        .chain-arrow {
+            font-size: 20px;
+            color: #555;
+            margin: 0 8px;
+            flex-shrink: 0;
+        }
+        .chain-label {
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+        }
+        /* ReadView */
+        .readview-box {
+            background: #16213e;
+            border: 2px solid #0f3460;
+            border-radius: 10px;
+            padding: 16px;
+            margin: 12px 0;
+        }
+        .readview-box .rv-title {
+            font-size: 14px;
+            color: #7c83ff;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        .readview-fields {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .rv-field {
+            background: #0f0f1a;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .rv-field .label { color: #888; font-size: 12px; }
+        .rv-field .value { color: #4ecca3; font-weight: bold; margin-top: 2px; }
+        /* Transaction chips */
+        .txn-chips {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 12px 0;
+        }
+        .txn-chip {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid #444;
+            background: #1a1a2e;
+            user-select: none;
+        }
+        .txn-chip.committed {
+            border-color: #4ecca3;
+            color: #4ecca3;
+        }
+        .txn-chip.active-txn {
+            border-color: #f39c12;
+            color: #f39c12;
+        }
+        .txn-chip.selected {
+            background: #f39c1233;
+            border-color: #f39c12;
+            color: #f39c12;
+            box-shadow: 0 0 10px #f39c1233;
+        }
+        .txn-chip.disabled { cursor: default; opacity: 0.6; }
+        /* Reason options */
+        .reason-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin: 12px 0;
+        }
+        .reason-option {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 2px solid #2a2a4a;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+        .reason-option:hover { border-color: #7c83ff; background: #7c83ff11; }
+        .reason-option.selected { border-color: #7c83ff; background: #7c83ff22; }
+        .reason-option.correct { border-color: #4ecca3; background: #4ecca322; }
+        .reason-option.wrong { border-color: #e94560; background: #e9456022; }
+        .reason-radio {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border: 2px solid #555;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .reason-option.selected .reason-radio { border-color: #7c83ff; }
+        .reason-option.selected .reason-radio::after {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #7c83ff;
+        }
+        /* Feedback */
+        .feedback {
+            padding: 14px 18px;
+            border-radius: 8px;
+            margin: 12px 0;
+            font-size: 14px;
+            line-height: 1.6;
+            animation: fadeIn 0.3s;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .feedback-correct {
+            background: #4ecca322;
+            border: 1px solid #4ecca3;
+            color: #4ecca3;
+        }
+        .feedback-wrong {
+            background: #e9456022;
+            border: 1px solid #e94560;
+            color: #e94560;
+        }
+        .feedback-info {
+            background: #7c83ff22;
+            border: 1px solid #7c83ff;
+            color: #aab0ff;
+        }
+        /* Timeline */
+        .timeline {
+            margin: 16px 0;
+            position: relative;
+        }
+        .timeline-row {
+            display: flex;
+            align-items: center;
+            margin: 6px 0;
+            font-size: 13px;
+        }
+        .timeline-label {
+            width: 90px;
+            font-weight: bold;
+            flex-shrink: 0;
+            font-size: 13px;
+        }
+        .timeline-label.txn-a { color: #7c83ff; }
+        .timeline-label.txn-b { color: #f39c12; }
+        .timeline-label.txn-c { color: #e94560; }
+        .timeline-bar {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            flex: 1;
+            height: 36px;
+        }
+        .timeline-event {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: nowrap;
+            text-align: center;
+            min-width: 60px;
+        }
+        .timeline-segment {
+            height: 4px;
+            flex: 1;
+            min-width: 20px;
+        }
+        .tl-a { background: #7c83ff; color: white; }
+        .tl-b { background: #f39c12; color: #111; }
+        .tl-c { background: #e94560; color: white; }
+        .seg-a { background: #7c83ff44; }
+        .seg-b { background: #f39c1244; }
+        .seg-c { background: #e9456044; }
+        .timeline-event.tl-highlight {
+            animation: pulse 1s infinite;
+            box-shadow: 0 0 10px currentColor;
+        }
+        /* Input */
+        .input-field {
+            background: #0f0f1a;
+            border: 2px solid #2a2a4a;
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: #eee;
+            font-size: 14px;
+            width: 80px;
+            text-align: center;
+            font-family: inherit;
+        }
+        .input-field:focus { outline: none; border-color: #7c83ff; }
+        .inline-input {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin: 4px 0;
+        }
+        /* Step indicator */
+        .step-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+        .step-num {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #7c83ff;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 13px;
+        }
+        .step-text { color: #ccc; }
+        /* Comparison table */
+        .cmp-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 14px;
+        }
+        .cmp-table th, .cmp-table td {
+            padding: 10px 14px;
+            border: 1px solid #2a2a4a;
+            text-align: center;
+        }
+        .cmp-table th {
+            background: #16213e;
+            color: #7c83ff;
+        }
+        .cmp-table td { color: #ccc; }
+        .cmp-table .highlight-cell {
+            color: #4ecca3;
+            font-weight: bold;
+        }
+        /* Misc */
+        .text-center { text-align: center; }
+        .mt-12 { margin-top: 12px; }
+        .mt-20 { margin-top: 20px; }
+        .mb-12 { margin-bottom: 12px; }
+        .text-muted { color: #666; font-size: 13px; }
+        .text-accent { color: #7c83ff; }
+        .text-green { color: #4ecca3; }
+        .text-yellow { color: #f39c12; }
+        .text-red { color: #e94560; }
+        .hidden { display: none !important; }
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .tag-green { background: #4ecca333; color: #4ecca3; }
+        .tag-yellow { background: #f39c1233; color: #f39c12; }
+        .tag-red { background: #e9456033; color: #e94560; }
+        .separator {
+            border: none;
+            border-top: 1px solid #2a2a4a;
+            margin: 16px 0;
+        }
+        .m-ids-drop {
+            min-height: 44px;
+            border: 2px dashed #f39c1266;
+            border-radius: 8px;
+            padding: 8px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin: 8px 0;
+            transition: all 0.2s;
+        }
+        .m-ids-drop.has-items { border-style: solid; border-color: #f39c12; }
+        .m-ids-placeholder {
+            color: #555;
+            font-size: 13px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回游戏中心</a>
+  <h1 class="game-topbar__title">MVCC 闯关游戏</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+  </div>
+</nav>
+<div id="app"></div>
+<script src="../../game-utils.js"></script>
+<script>
+// ===== GAME DATA =====
+const LEVELS = [
+    {
+        id: 1,
+        title: '认识版本链',
+        subtitle: '每行数据都藏着一条"历史记录链"',
+        intro: `<p>在 InnoDB 中，每次修改一行数据，<strong>旧版本不会被删除</strong>，而是保存在 undo log 里。</p>
+            <p style="margin-top:8px">新版本通过一个叫 <span class="text-accent">roll_pointer</span> 的指针指向旧版本，形成一条<strong>版本链</strong>。</p>
+            <p style="margin-top:8px">每个版本还记录了是哪个事务修改的 —— <span class="text-accent">trx_id</span>。</p>
+            <p style="margin-top:12px">接下来，你来亲手看看这条链是怎么"长"出来的。</p>`,
+    },
+    {
+        id: 2,
+        title: '构建 ReadView',
+        subtitle: '事务读数据前，先搞清楚"谁还没交卷"',
+        intro: `<p>当一个事务要读数据时，InnoDB 会创建一个 <strong>ReadView</strong>（读视图）。</p>
+            <p style="margin-top:8px">ReadView 记录了创建那一刻<strong>哪些事务还没提交</strong>，用来判断版本可见性。</p>
+            <p style="margin-top:8px">它包含四个关键字段：</p>
+            <ul style="margin-top:8px; padding-left:20px;">
+                <li><span class="text-yellow">m_ids</span> —— 还没提交的事务 ID 列表</li>
+                <li><span class="text-yellow">min_trx_id</span> —— m_ids 中最小的</li>
+                <li><span class="text-yellow">max_trx_id</span> —— 下一个要分配的事务 ID</li>
+                <li><span class="text-yellow">creator_trx_id</span> —— 创建这个 ReadView 的事务 ID</li>
+            </ul>
+            <p style="margin-top:12px">接下来，你来亲手构建一个 ReadView。</p>`,
+    },
+    {
+        id: 3,
+        title: '判断可见性',
+        subtitle: '沿着版本链，找到你应该看到的那个版本',
+        intro: `<p>有了 ReadView，就可以沿版本链<strong>从新到旧</strong>逐个判断每个版本能不能看到。</p>
+            <p style="margin-top:8px">判断规则：</p>
+            <ul style="margin-top:8px; padding-left:20px;">
+                <li>trx_id == creator_trx_id → <span class="text-green">能看到</span>（我自己改的）</li>
+                <li>trx_id < min_trx_id → <span class="text-green">能看到</span>（事务早已提交）</li>
+                <li>trx_id >= max_trx_id → <span class="text-red">看不到</span>（事务在我之后才开始）</li>
+                <li>trx_id 在 m_ids 中 → <span class="text-red">看不到</span>（事务还没提交）</li>
+                <li>trx_id 不在 m_ids 中 → <span class="text-green">能看到</span>（事务已提交）</li>
+            </ul>
+            <p style="margin-top:12px">接下来，你来亲手走一遍这个判断流程。</p>`,
+    },
+    {
+        id: 4,
+        title: 'RC 模式（读已提交）',
+        subtitle: '每次 SELECT 都重新创建 ReadView',
+        intro: `<p>在 <strong>RC（Read Committed）</strong> 隔离级别下：</p>
+            <p style="margin-top:8px">事务中<strong>每次 SELECT</strong> 都会重新创建一个新的 ReadView。</p>
+            <p style="margin-top:8px">这意味着：如果在两次 SELECT 之间，别的事务提交了修改，第二次 SELECT 就能看到新数据。</p>
+            <p style="margin-top:12px">接下来，你来走一个完整的 RC 场景。</p>`,
+    },
+    {
+        id: 5,
+        title: 'RR 模式（可重复读）',
+        subtitle: '复用第一次的 ReadView',
+        intro: `<p>在 <strong>RR（Repeatable Read）</strong> 隔离级别下：</p>
+            <p style="margin-top:8px">事务中<strong>只在第一次 SELECT 时</strong>创建 ReadView，之后所有 SELECT 都复用它。</p>
+            <p style="margin-top:8px">这意味着：即使别的事务提交了修改，你也看不到——你看到的永远是第一次读时的快照。</p>
+            <p style="margin-top:12px">接下来，用<strong>和第 4 关完全相同的场景</strong>，体验 RR 模式的不同结果。</p>`,
+    },
+    {
+        id: 6,
+        title: '终极挑战',
+        subtitle: '三个事务交错执行，你能判断正确吗？',
+        intro: `<p>这一关结合了前面所有知识：版本链 + ReadView + 可见性判断 + RC/RR 对比。</p>
+            <p style="margin-top:8px">场景更复杂：<strong>三个事务</strong>交错执行，有的提交了，有的没提交。</p>
+            <p style="margin-top:12px">准备好了吗？</p>`,
+    },
+];
+
+// ===== STATE =====
+let state = {
+    screen: 'welcome',
+    currentLevel: 0,
+    phase: 'intro',
+    levelState: {},
+    levelScores: [],
+};
+
+// ===== RENDERING =====
+const app = document.getElementById('app');
+
+function render() {
+    switch (state.screen) {
+        case 'welcome': renderWelcome(); break;
+        case 'level': renderLevel(); break;
+        case 'gameover': renderGameOver(); break;
+    }
+}
+
+function renderWelcome() {
+    TopbarProgress.reset();
+    app.innerHTML = `
+        <div class="header">
+            <h1>MVCC 闯关游戏</h1>
+            <p class="subtitle">从零理解 MySQL InnoDB 的多版本并发控制</p>
+        </div>
+        <div class="card text-center">
+            <h2>你将扮演数据库内核</h2>
+            <h3>亲手走一遍 MVCC 的每一步</h3>
+            <div style="text-align:left; margin: 20px 0;">
+                <p>共 <strong>6 关</strong>，循序渐进：</p>
+                <ul style="padding-left:20px; margin-top:10px;">
+                    <li>第 1 关：认识版本链</li>
+                    <li>第 2 关：学会构建 ReadView</li>
+                    <li>第 3 关：用 ReadView 判断可见性</li>
+                    <li>第 4 关：RC 模式完整场景</li>
+                    <li>第 5 关：RR 模式同场景对比</li>
+                    <li>第 6 关：终极挑战</li>
+                </ul>
+            </div>
+            <button class="btn btn-primary" onclick="startGame()">开始闯关</button>
+        </div>`;
+}
+
+function renderProgressBar() {
+    const done = state.phase === 'complete' ? state.currentLevel + 1 : state.currentLevel;
+    const active = done < LEVELS.length ? done : -1;
+    TopbarProgress.update({ doneUpTo: done, activeIndex: active });
+    return '';
+}
+
+function renderLevel() {
+    const level = LEVELS[state.currentLevel];
+    let content = `
+        <div class="header">
+            <h1>第 ${level.id} 关：${level.title}</h1>
+            <p class="subtitle">${level.subtitle}</p>
+            ${renderProgressBar()}
+        </div>`;
+
+    if (state.phase === 'intro') {
+        content += `
+            <div class="card">
+                ${level.intro}
+                <div class="btn-group" style="justify-content:center;">
+                    <button class="btn btn-primary" onclick="startLevelPlay()">开始</button>
+                </div>
+            </div>`;
+    } else if (state.phase === 'complete') {
+        content += renderLevelComplete();
+    } else {
+        switch (state.currentLevel) {
+            case 0: content += renderLevel1(); break;
+            case 1: content += renderLevel2(); break;
+            case 2: content += renderLevel3(); break;
+            case 3: content += renderLevel4(); break;
+            case 4: content += renderLevel5(); break;
+            case 5: content += renderLevel6(); break;
+        }
+    }
+    app.innerHTML = content;
+}
+
+function renderLevelComplete() {
+    const level = LEVELS[state.currentLevel];
+    const ls = state.levelState;
+    const isLast = state.currentLevel === LEVELS.length - 1;
+    let summary = '';
+    if (state.currentLevel === 0) {
+        summary = `<p>你已经理解了版本链的核心概念：</p>
+            <ul style="padding-left:20px;margin-top:8px;">
+                <li>每次 UPDATE 都会产生新版本，旧版本通过 <span class="text-accent">roll_pointer</span> 串成链</li>
+                <li>每个版本都记录了修改它的 <span class="text-accent">trx_id</span></li>
+            </ul>`;
+    } else if (state.currentLevel === 1) {
+        summary = `<p>你已经学会了构建 ReadView：</p>
+            <ul style="padding-left:20px;margin-top:8px;">
+                <li><span class="text-yellow">m_ids</span>：拍快照时还没提交的事务列表</li>
+                <li><span class="text-yellow">min_trx_id</span>：m_ids 中最小的 ID</li>
+                <li><span class="text-yellow">max_trx_id</span>：下一个要分配的事务 ID</li>
+            </ul>`;
+    } else if (state.currentLevel === 2) {
+        summary = `<p>你已经掌握了可见性判断规则：</p>
+            <ul style="padding-left:20px;margin-top:8px;">
+                <li>沿版本链从新到旧，找到第一个"能看到"的版本</li>
+                <li>判断依据是 trx_id 与 ReadView 各字段的关系</li>
+            </ul>`;
+    } else if (state.currentLevel === 3) {
+        summary = `<p>在 RC 模式下：</p>
+            <ul style="padding-left:20px;margin-top:8px;">
+                <li>每次 SELECT 都<strong>重新创建</strong> ReadView</li>
+                <li>因此能看到其他事务在两次读之间提交的修改</li>
+                <li>两次读可能得到<strong>不同的结果</strong></li>
+            </ul>`;
+    } else if (state.currentLevel === 4) {
+        const rcResult = state.levelScores[3]?.results || {};
+        summary = `<p>在 RR 模式下：</p>
+            <ul style="padding-left:20px;margin-top:8px;">
+                <li>只在第一次 SELECT 时创建 ReadView，<strong>之后复用</strong></li>
+                <li>即使其他事务提交了修改，也看不到</li>
+                <li>两次读得到<strong>相同的结果</strong></li>
+            </ul>
+            <hr class="separator">
+            <p><strong>RC vs RR 对比：</strong></p>
+            <table class="cmp-table">
+                <tr><th></th><th>第一次 SELECT</th><th>第二次 SELECT</th></tr>
+                <tr><td>RC 模式</td><td>${rcResult.select1 || '张三'}</td><td class="highlight-cell">${rcResult.select2 || '李四'}</td></tr>
+                <tr><td>RR 模式</td><td>${ls.results?.select1 || '张三'}</td><td class="highlight-cell">${ls.results?.select2 || '张三'}</td></tr>
+            </table>
+            <p class="mt-12 text-muted">同样的场景、同样的时间线，只因 ReadView 创建时机不同，结果就不同。</p>`;
+    } else if (state.currentLevel === 5) {
+        summary = `<p>恭喜你通关了所有关卡！你已经完整掌握了 MVCC 的核心机制。</p>`;
+    }
+
+    return `<div class="card">
+        <h2>通关！</h2>
+        ${summary}
+        <div class="btn-group" style="justify-content:center;">
+            <button class="btn btn-primary" onclick="${isLast ? 'showGameOver()' : 'nextLevel()'}">
+                ${isLast ? '查看通关总结' : '下一关 →'}
+            </button>
+        </div>
+    </div>`;
+}
+
+// ===== LEVEL 1: 认识版本链 =====
+function initLevel1() {
+    state.levelState = {
+        step: 0, // 0: initial row, 1-3: after each update, 4: quiz
+        chain: [{ trx_id: 90, data: { name: '张三', balance: 1000 }, committed: true }],
+        updates: [
+            { trx_id: 100, data: { name: '张三', balance: 800 }, desc: '事务100：张三转账，余额从 1000 扣到 800' },
+            { trx_id: 101, data: { name: '张三', balance: 600 }, desc: '事务101：再次扣款，余额从 800 扣到 600' },
+            { trx_id: 102, data: { name: '张三', balance: 6600 }, desc: '事务102：发工资 +6000，余额变成 6600' },
+        ],
+        exploredNodes: new Set(),
+        quizAnswered: false,
+    };
+}
+
+function renderLevel1() {
+    const ls = state.levelState;
+    let html = '';
+
+    // Step indicator
+    if (ls.step < 3) {
+        html += `<div class="card">
+            <div class="step-indicator">
+                <div class="step-num">${ls.step + 1}</div>
+                <div class="step-text">${ls.step === 0 ? '这是数据库中的一行数据（注意隐藏列）' : '点击"执行"按钮，观察版本链的变化'}</div>
+            </div>`;
+    } else if (ls.step === 3 && !ls.quizAnswered) {
+        html += `<div class="card">
+            <div class="step-indicator">
+                <div class="step-num">4</div>
+                <div class="step-text">点击版本链中的每个节点，查看每个版本的数据</div>
+            </div>`;
+    } else {
+        html += `<div class="card">`;
+    }
+
+    // Version chain
+    html += `<p class="mb-12 text-muted">版本链（最新 ← 最旧）：</p>
+        <div class="chain-container">`;
+    for (let i = 0; i < ls.chain.length; i++) {
+        const v = ls.chain[i];
+        const isExplored = ls.exploredNodes.has(i);
+        const clickable = ls.step >= 3 && !ls.quizAnswered;
+        html += `<div class="chain-node ${clickable ? 'clickable' : ''} ${isExplored ? 'visible-yes' : ''}"
+                      ${clickable ? `onclick="level1Explore(${i})"` : ''}>
+                <div class="trx-label">trx_id = ${v.trx_id}</div>
+                <div class="data-label">${v.data.name}</div>
+                <div style="font-size:12px;color:#888;margin-top:2px">余额: ${v.data.balance}</div>
+                ${isExplored ? '<div class="badge badge-yes">✓</div>' : ''}
+            </div>`;
+        if (i < ls.chain.length - 1) {
+            html += `<div class="chain-arrow">→</div>`;
+        }
+    }
+    html += `</div>`;
+    html += `<p class="text-center text-muted" style="font-size:12px;">
+                roll_pointer（指向上一个版本） →</p>`;
+
+    // Action area
+    if (ls.step < 3) {
+        const upd = ls.updates[ls.step];
+        if (ls.step === 0) {
+            html += `<div class="feedback feedback-info mt-12">
+                当前数据库中只有一个版本：name="张三"，balance=1000，由事务90写入（已提交）。
+                <br>注意隐藏列 <strong>trx_id</strong>（记录谁修改的）和节点之间的箭头 <strong>roll_pointer</strong>（指向上一版本）。
+            </div>`;
+        }
+        html += `<div class="mt-12">
+            <p><strong>即将执行：</strong>${upd.desc}</p>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="level1Execute()">执行 UPDATE</button>
+            </div>
+        </div>`;
+    } else if (ls.step === 3 && !ls.quizAnswered) {
+        const allExplored = ls.exploredNodes.size >= ls.chain.length;
+        html += `<div class="mt-12">
+            <p>已查看 ${ls.exploredNodes.size} / ${ls.chain.length} 个版本</p>
+            ${allExplored ? `
+                <div class="feedback feedback-correct">
+                    你已经查看了所有版本！现在你可以看到：虽然当前余额是 6600，但历史版本（1000 → 800 → 600）都还保留着。
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-success" onclick="level1Complete()">我理解了，继续</button>
+                </div>
+            ` : `<p class="text-muted">点击每个节点查看数据内容</p>`}
+        </div>`;
+    }
+
+    html += `</div>`;
+    return html;
+}
+
+function level1Execute() {
+    const ls = state.levelState;
+    const upd = ls.updates[ls.step];
+    ls.chain.unshift({ trx_id: upd.trx_id, data: { ...upd.data }, committed: true });
+    ls.step++;
+    render();
+}
+
+function level1Explore(idx) {
+    state.levelState.exploredNodes.add(idx);
+    render();
+}
+
+function level1Complete() {
+    state.levelState.quizAnswered = true;
+    state.phase = 'complete';
+    render();
+}
+
+// ===== LEVEL 2: 构建 ReadView =====
+function initLevel2() {
+    state.levelState = {
+        step: 'pick_mids',
+        transactions: [
+            { id: 98, committed: true, label: '事务98' },
+            { id: 100, committed: false, label: '事务100' },
+            { id: 101, committed: true, label: '事务101' },
+            { id: 102, committed: false, label: '事务102' },
+        ],
+        myTrxId: 103,
+        selectedMids: new Set(),
+        minInput: '',
+        maxInput: '',
+        correctMids: [100, 102, 103],
+        correctMin: 100,
+        correctMax: 104,
+        feedback: null,
+        midsCorrect: false,
+        minCorrect: false,
+        maxCorrect: false,
+    };
+}
+
+function renderLevel2() {
+    const ls = state.levelState;
+    let html = `<div class="card">`;
+
+    // Scene description
+    html += `<div class="feedback feedback-info">
+        <strong>场景：</strong>你是事务 ${ls.myTrxId}，现在要读数据，需要先构建 ReadView。<br>
+        当前系统中有以下事务：
+    </div>`;
+
+    // Show transactions
+    html += `<div style="margin:12px 0;">
+        <table class="cmp-table">
+            <tr><th>事务 ID</th><th>状态</th></tr>
+            ${ls.transactions.map(t => `
+                <tr>
+                    <td>${t.id}</td>
+                    <td>${t.committed
+                        ? '<span class="tag tag-green">已提交</span>'
+                        : '<span class="tag tag-yellow">进行中（未提交）</span>'}</td>
+                </tr>`).join('')}
+            <tr>
+                <td>${ls.myTrxId}</td>
+                <td><span class="tag tag-yellow">进行中 - 这是你自己</span></td>
+            </tr>
+        </table>
+    </div>`;
+
+    // Step 1: Pick m_ids
+    html += `<hr class="separator">
+        <div class="step-indicator">
+            <div class="step-num" style="${ls.midsCorrect ? 'background:#4ecca3' : ''}">1</div>
+            <div class="step-text">构建 m_ids：点击所有<strong>还没提交</strong>的事务</div>
+        </div>`;
+
+    if (!ls.midsCorrect) {
+        html += `<div class="txn-chips">`;
+        const allIds = [...ls.transactions.map(t => t.id), ls.myTrxId];
+        allIds.forEach(id => {
+            const selected = ls.selectedMids.has(id);
+            html += `<div class="txn-chip ${selected ? 'selected' : ''}" onclick="level2ToggleMid(${id})">
+                事务 ${id} ${selected ? '✓' : ''}
+            </div>`;
+        });
+        html += `</div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="level2CheckMids()" ${ls.selectedMids.size === 0 ? 'disabled' : ''}>
+                    确认 m_ids
+                </button>
+            </div>`;
+    } else {
+        html += `<div class="m-ids-drop has-items">
+            ${ls.correctMids.map(id => `<div class="txn-chip selected disabled">事务 ${id}</div>`).join('')}
+        </div>
+        <div class="feedback feedback-correct">正确！m_ids = [${ls.correctMids.join(', ')}]</div>`;
+    }
+
+    // Step 2: min_trx_id
+    if (ls.midsCorrect) {
+        html += `<hr class="separator">
+            <div class="step-indicator">
+                <div class="step-num" style="${ls.minCorrect ? 'background:#4ecca3' : ''}">2</div>
+                <div class="step-text">min_trx_id = m_ids 中<strong>最小</strong>的事务 ID</div>
+            </div>`;
+        if (!ls.minCorrect) {
+            html += `<div class="inline-input">
+                <span>min_trx_id = </span>
+                <input class="input-field" id="min-input" type="number" value="${ls.minInput}"
+                    onchange="state.levelState.minInput=this.value">
+                <button class="btn btn-primary" onclick="level2CheckMin()">确认</button>
+            </div>`;
+        } else {
+            html += `<div class="feedback feedback-correct">正确！min_trx_id = ${ls.correctMin}</div>`;
+        }
+    }
+
+    // Step 3: max_trx_id
+    if (ls.minCorrect) {
+        html += `<hr class="separator">
+            <div class="step-indicator">
+                <div class="step-num" style="${ls.maxCorrect ? 'background:#4ecca3' : ''}">3</div>
+                <div class="step-text">max_trx_id = 下一个<strong>将要分配</strong>的事务 ID</div>
+            </div>`;
+        if (!ls.maxCorrect) {
+            html += `<div class="feedback feedback-info" style="margin-bottom:8px;">
+                提示：当前已分配的最大事务 ID 是 ${ls.myTrxId}，那么下一个要分配的 ID 是多少？
+            </div>
+            <div class="inline-input">
+                <span>max_trx_id = </span>
+                <input class="input-field" id="max-input" type="number" value="${ls.maxInput}"
+                    onchange="state.levelState.maxInput=this.value">
+                <button class="btn btn-primary" onclick="level2CheckMax()">确认</button>
+            </div>`;
+        } else {
+            html += `<div class="feedback feedback-correct">正确！max_trx_id = ${ls.correctMax}</div>`;
+        }
+    }
+
+    // Final ReadView display
+    if (ls.maxCorrect) {
+        html += `<hr class="separator">
+            <div class="readview-box">
+                <div class="rv-title">你构建的 ReadView</div>
+                <div class="readview-fields">
+                    <div class="rv-field"><div class="label">creator_trx_id</div><div class="value">${ls.myTrxId}</div></div>
+                    <div class="rv-field"><div class="label">m_ids</div><div class="value">[${ls.correctMids.join(', ')}]</div></div>
+                    <div class="rv-field"><div class="label">min_trx_id</div><div class="value">${ls.correctMin}</div></div>
+                    <div class="rv-field"><div class="label">max_trx_id</div><div class="value">${ls.correctMax}</div></div>
+                </div>
+            </div>
+            <div class="btn-group" style="justify-content:center;">
+                <button class="btn btn-success" onclick="levelComplete()">我理解了，下一关</button>
+            </div>`;
+    }
+
+    // Feedback
+    if (ls.feedback) {
+        html += `<div class="feedback ${ls.feedback.type} mt-12">${ls.feedback.msg}</div>`;
+    }
+
+    html += `</div>`;
+    return html;
+}
+
+function level2ToggleMid(id) {
+    const ls = state.levelState;
+    if (ls.midsCorrect) return;
+    if (ls.selectedMids.has(id)) ls.selectedMids.delete(id);
+    else ls.selectedMids.add(id);
+    ls.feedback = null;
+    render();
+}
+
+function level2CheckMids() {
+    const ls = state.levelState;
+    const selected = [...ls.selectedMids].sort((a, b) => a - b);
+    const correct = [...ls.correctMids].sort((a, b) => a - b);
+    if (JSON.stringify(selected) === JSON.stringify(correct)) {
+        ls.midsCorrect = true;
+        ls.feedback = null;
+    } else {
+        // Give specific feedback
+        const missed = correct.filter(id => !ls.selectedMids.has(id));
+        const extra = selected.filter(id => !correct.includes(id));
+        let msg = '不太对。';
+        if (missed.length > 0) {
+            const missedInfo = missed.map(id => {
+                if (id === ls.myTrxId) return `事务 ${id} 是你自己，也还没提交`;
+                return `事务 ${id} 还没提交`;
+            });
+            msg += ` ${missedInfo.join('；')}，应该加入 m_ids。`;
+        }
+        if (extra.length > 0) {
+            msg += ` 事务 ${extra.join('、')} 已经提交了，不应该在 m_ids 中。`;
+        }
+        ls.feedback = { type: 'feedback-wrong', msg };
+    }
+    render();
+}
+
+function level2CheckMin() {
+    const ls = state.levelState;
+    const val = parseInt(document.getElementById('min-input')?.value);
+    if (val === ls.correctMin) {
+        ls.minCorrect = true;
+        ls.feedback = null;
+    } else {
+        ls.feedback = { type: 'feedback-wrong', msg: `不对哦。m_ids 是 [${ls.correctMids.join(', ')}]，其中最小的是？` };
+    }
+    render();
+}
+
+function level2CheckMax() {
+    const ls = state.levelState;
+    const val = parseInt(document.getElementById('max-input')?.value);
+    if (val === ls.correctMax) {
+        ls.maxCorrect = true;
+        ls.feedback = null;
+    } else {
+        ls.feedback = { type: 'feedback-wrong', msg: `不对哦。当前最大的事务 ID 是 ${ls.myTrxId}，那下一个要分配的就是 ${ls.myTrxId} + 1 = ${ls.correctMax}` };
+    }
+    render();
+}
+
+// ===== LEVEL 3: 判断可见性 =====
+function initLevel3() {
+    state.levelState = {
+        readView: { creator: 200, m_ids: [200, 202], min: 200, max: 206 },
+        chain: [
+            { trx_id: 206, data: 'name = "赵六"', visible: false, rule: 'gte_max', ruleText: 'trx_id(206) >= max_trx_id(206)，这个事务在我之后才开始' },
+            { trx_id: 202, data: 'name = "王五"', visible: false, rule: 'in_mids', ruleText: 'trx_id(202) 在 m_ids [200,202] 中，这个事务还没提交' },
+            { trx_id: 201, data: 'name = "李四"', visible: true, rule: 'not_in_mids', ruleText: 'trx_id(201) 不在 m_ids 中且 200<=201<206，事务已提交' },
+            { trx_id: 90, data: 'name = "张三"', visible: true, rule: 'lt_min', ruleText: 'trx_id(90) < min_trx_id(200)，事务早已提交' },
+        ],
+        currentNode: 0,
+        judgments: [],
+        selectedVisibility: null,
+        selectedReason: null,
+        feedback: null,
+        foundAnswer: false,
+    };
+}
+
+function renderLevel3() {
+    const ls = state.levelState;
+    const rv = ls.readView;
+    let html = '';
+
+    // ReadView display
+    html += `<div class="card">
+        <div class="readview-box">
+            <div class="rv-title">你的 ReadView（事务 ${rv.creator}）</div>
+            <div class="readview-fields">
+                <div class="rv-field"><div class="label">creator_trx_id</div><div class="value">${rv.creator}</div></div>
+                <div class="rv-field"><div class="label">m_ids</div><div class="value">[${rv.m_ids.join(', ')}]</div></div>
+                <div class="rv-field"><div class="label">min_trx_id</div><div class="value">${rv.min}</div></div>
+                <div class="rv-field"><div class="label">max_trx_id</div><div class="value">${rv.max}</div></div>
+            </div>
+        </div>
+    </div>`;
+
+    // Version chain with judgments
+    html += `<div class="card">
+        <p class="mb-12">版本链（从新到旧检查）：</p>
+        <div class="chain-container">`;
+    for (let i = 0; i < ls.chain.length; i++) {
+        const v = ls.chain[i];
+        const judged = i < ls.currentNode;
+        const isCurrent = i === ls.currentNode && !ls.foundAnswer;
+        let cls = '';
+        if (judged) cls = ls.chain[i].visible && i === ls.judgments.findIndex(j => j) ? 'visible-yes highlight' : (ls.chain[i].visible ? 'visible-yes' : 'visible-no');
+        else if (isCurrent) cls = 'active';
+        html += `<div class="chain-node ${cls}">
+            <div class="trx-label">trx_id = ${v.trx_id}</div>
+            <div class="data-label">${v.data}</div>
+            ${judged ? `<div class="badge ${ls.judgments[i] ? 'badge-yes' : 'badge-no'}">${ls.judgments[i] ? '✓' : '✗'}</div>` : ''}
+        </div>`;
+        if (i < ls.chain.length - 1) html += `<div class="chain-arrow">→</div>`;
+    }
+    html += `</div></div>`;
+
+    // Judgment area
+    if (!ls.foundAnswer && ls.currentNode < ls.chain.length) {
+        const v = ls.chain[ls.currentNode];
+        html += `<div class="card">
+            <div class="step-indicator">
+                <div class="step-num">${ls.currentNode + 1}</div>
+                <div class="step-text">检查版本：trx_id = <strong>${v.trx_id}</strong>，${v.data}</div>
+            </div>
+            <p class="mb-12">这个版本，你能看到吗？</p>
+            <div class="btn-group mb-12">
+                <button class="btn ${ls.selectedVisibility === true ? 'btn-success' : 'btn-outline'}"
+                    onclick="level3SelectVis(true)">能看到</button>
+                <button class="btn ${ls.selectedVisibility === false ? 'btn-danger' : 'btn-outline'}"
+                    onclick="level3SelectVis(false)">看不到</button>
+            </div>`;
+
+        if (ls.selectedVisibility !== null) {
+            html += `<p class="mb-12">为什么？</p>
+                <div class="reason-list">`;
+            const reasons = [
+                { key: 'eq_creator', text: `trx_id(${v.trx_id}) == creator_trx_id(${rv.creator})，是我自己的修改` },
+                { key: 'lt_min', text: `trx_id(${v.trx_id}) < min_trx_id(${rv.min})，事务早已提交` },
+                { key: 'gte_max', text: `trx_id(${v.trx_id}) >= max_trx_id(${rv.max})，事务在我之后才开始` },
+                { key: 'in_mids', text: `trx_id(${v.trx_id}) 在 m_ids [${rv.m_ids.join(',')}] 中，事务还没提交` },
+                { key: 'not_in_mids', text: `trx_id(${v.trx_id}) 不在 m_ids 中，事务已提交` },
+            ];
+            reasons.forEach(r => {
+                html += `<div class="reason-option ${ls.selectedReason === r.key ? 'selected' : ''}"
+                    onclick="level3SelectReason('${r.key}')">
+                    <div class="reason-radio"></div>
+                    <div>${r.text}</div>
+                </div>`;
+            });
+            html += `</div>`;
+        }
+
+        if (ls.selectedVisibility !== null && ls.selectedReason !== null) {
+            html += `<div class="btn-group" style="justify-content:center;">
+                <button class="btn btn-primary" onclick="level3Submit()">提交判断</button>
+            </div>`;
+        }
+
+        if (ls.feedback) {
+            html += `<div class="feedback ${ls.feedback.type} mt-12">${ls.feedback.msg}</div>`;
+        }
+
+        html += `</div>`;
+    }
+
+    // Found answer
+    if (ls.foundAnswer) {
+        const answerIdx = ls.judgments.findIndex(j => j === true);
+        const answerNode = ls.chain[answerIdx];
+        html += `<div class="card">
+            <div class="feedback feedback-correct">
+                <strong>找到了！</strong>你应该读到的数据是：<strong>${answerNode.data}</strong>
+                <br>（来自事务 ${answerNode.trx_id} 的版本，是版本链上第一个"能看到"的版本）
+            </div>
+            <div class="btn-group" style="justify-content:center;">
+                <button class="btn btn-success" onclick="levelComplete()">下一关</button>
+            </div>
+        </div>`;
+    }
+
+    return html;
+}
+
+function level3SelectVis(val) {
+    state.levelState.selectedVisibility = val;
+    state.levelState.selectedReason = null;
+    state.levelState.feedback = null;
+    render();
+}
+
+function level3SelectReason(key) {
+    state.levelState.selectedReason = key;
+    state.levelState.feedback = null;
+    render();
+}
+
+function level3Submit() {
+    const ls = state.levelState;
+    const v = ls.chain[ls.currentNode];
+    const correctVis = v.visible;
+    const correctRule = v.rule;
+
+    if (ls.selectedVisibility === correctVis && ls.selectedReason === correctRule) {
+        ls.judgments.push(correctVis);
+        if (correctVis) {
+            // Found the first visible version
+            ls.foundAnswer = true;
+            ls.feedback = null;
+        } else {
+            ls.currentNode++;
+            ls.feedback = { type: 'feedback-correct', msg: `正确！${v.ruleText}。继续检查下一个版本。` };
+        }
+        ls.selectedVisibility = null;
+        ls.selectedReason = null;
+    } else {
+        let msg = '不太对。';
+        if (ls.selectedVisibility !== correctVis) {
+            msg = correctVis
+                ? `这个版本你应该<strong>能看到</strong>。${v.ruleText}`
+                : `这个版本你<strong>看不到</strong>。${v.ruleText}`;
+        } else {
+            msg = `可见性判断对了，但理由不对。正确的理由是：${v.ruleText}`;
+        }
+        ls.feedback = { type: 'feedback-wrong', msg };
+    }
+    render();
+}
+
+// ===== LEVEL 4 & 5: RC and RR modes =====
+function initLevel4() {
+    state.levelState = {
+        step: 'intro_scene',
+        results: {},
+        feedback: null,
+        // SELECT 1 state
+        s1_mids: new Set(),
+        s1_midsCorrect: false,
+        s1_vis: null,
+        s1_reason: null,
+        s1_done: false,
+        // SELECT 2 state
+        s2_mids: new Set(),
+        s2_midsCorrect: false,
+        s2_currentNode: 0,
+        s2_judgments: [],
+        s2_vis: null,
+        s2_reason: null,
+        s2_done: false,
+    };
+}
+
+function initLevel5() {
+    initLevel4();
+    state.levelState.isRR = true;
+}
+
+function renderLevel4() { return renderRCRR(); }
+function renderLevel5() { return renderRCRR(); }
+
+function renderRCRR() {
+    const ls = state.levelState;
+    const isRR = ls.isRR || false;
+    const modeLabel = isRR ? 'RR' : 'RC';
+    let html = '';
+
+    // Timeline
+    html += `<div class="card">
+        <p class="mb-12"><strong>场景时间线：</strong></p>
+        <div class="timeline">
+            <div class="timeline-row">
+                <div class="timeline-label txn-a">事务A(100)</div>
+                <div class="timeline-bar">
+                    <div class="timeline-event tl-a">BEGIN</div>
+                    <div class="timeline-segment seg-a"></div>
+                    <div class="timeline-event tl-a ${ls.step === 'select1' ? 'tl-highlight' : ''}">SELECT①</div>
+                    <div class="timeline-segment seg-a"></div>
+                    <div class="timeline-segment seg-a"></div>
+                    <div class="timeline-segment seg-a"></div>
+                    <div class="timeline-event tl-a ${ls.step === 'select2' || ls.step === 'select2_judge' ? 'tl-highlight' : ''}">SELECT②</div>
+                    <div class="timeline-segment seg-a"></div>
+                </div>
+            </div>
+            <div class="timeline-row">
+                <div class="timeline-label txn-b">事务B(101)</div>
+                <div class="timeline-bar">
+                    <div class="timeline-segment seg-b"></div>
+                    <div class="timeline-event tl-b">BEGIN</div>
+                    <div class="timeline-segment seg-b"></div>
+                    <div class="timeline-event tl-b">UPDATE</div>
+                    <div class="timeline-segment seg-b"></div>
+                    <div class="timeline-event tl-b" style="background:#4ecca3;color:#111;">COMMIT</div>
+                    <div class="timeline-segment seg-b"></div>
+                    <div class="timeline-segment seg-b"></div>
+                </div>
+            </div>
+        </div>
+        <p class="text-muted" style="margin-top:8px;">
+            初始数据：name = "张三"（trx_id = 90，已提交）<br>
+            事务B 将 name 改为 "李四"，然后提交。<br>
+            事务A 在 B 提交前后各做一次 SELECT。
+        </p>
+    </div>`;
+
+    // SELECT 1
+    if (ls.step === 'intro_scene') {
+        html += `<div class="card text-center">
+            <p>理解了场景后，让我们来走事务A 的<strong>第一次 SELECT</strong>。</p>
+            <div class="btn-group" style="justify-content:center;">
+                <button class="btn btn-primary" onclick="rcrr_goSelect1()">开始 SELECT①</button>
+            </div>
+        </div>`;
+    }
+
+    if (ls.step === 'select1') {
+        html += `<div class="card">
+            <h2>SELECT① —— 构建 ReadView</h2>
+            <div class="feedback feedback-info">
+                此刻，事务A(100) 和 事务B(101) 都<strong>还没提交</strong>。
+            </div>
+            <p class="mb-12">这个 ReadView 的 m_ids 应该包含哪些事务？</p>
+            <div class="txn-chips">
+                ${[100, 101].map(id => `
+                    <div class="txn-chip ${ls.s1_mids.has(id) ? 'selected' : ''}" onclick="rcrr_s1ToggleMid(${id})">
+                        事务 ${id} ${ls.s1_mids.has(id) ? '✓' : ''}
+                    </div>`).join('')}
+            </div>`;
+        if (!ls.s1_midsCorrect) {
+            html += `<div class="btn-group">
+                <button class="btn btn-primary" onclick="rcrr_s1CheckMids()">确认</button>
+            </div>`;
+        } else {
+            html += `<div class="feedback feedback-correct">正确！m_ids = [100, 101]，min = 100，max = 102</div>
+                <div class="readview-box">
+                    <div class="rv-title">SELECT① 的 ReadView</div>
+                    <div class="readview-fields">
+                        <div class="rv-field"><div class="label">creator_trx_id</div><div class="value">100</div></div>
+                        <div class="rv-field"><div class="label">m_ids</div><div class="value">[100, 101]</div></div>
+                        <div class="rv-field"><div class="label">min_trx_id</div><div class="value">100</div></div>
+                        <div class="rv-field"><div class="label">max_trx_id</div><div class="value">102</div></div>
+                    </div>
+                </div>
+                <p class="mt-12">版本链此刻只有一个版本：</p>
+                <div class="chain-container">
+                    <div class="chain-node active">
+                        <div class="trx-label">trx_id = 90</div>
+                        <div class="data-label">name = "张三"</div>
+                    </div>
+                </div>
+                <p class="mt-12">trx_id(90) < min_trx_id(100) → <span class="text-green">能看到</span></p>
+                <div class="feedback feedback-correct mt-12">
+                    <strong>SELECT① 结果：name = "张三"</strong>
+                </div>
+                <div class="btn-group" style="justify-content:center;">
+                    <button class="btn btn-primary" onclick="rcrr_goMiddle()">继续（事务B 执行 UPDATE + COMMIT）</button>
+                </div>`;
+        }
+        if (ls.feedback && ls.step === 'select1') {
+            html += `<div class="feedback ${ls.feedback.type} mt-12">${ls.feedback.msg}</div>`;
+        }
+        html += `</div>`;
+    }
+
+    // Middle: B updates and commits
+    if (ls.step === 'middle') {
+        html += `<div class="card">
+            <h2>事务B 执行 UPDATE 并 COMMIT</h2>
+            <p>事务B 将 name 改为 "李四"，并提交了。版本链变为：</p>
+            <div class="chain-container">
+                <div class="chain-node" style="border-color:#f39c12;">
+                    <div class="trx-label">trx_id = 101</div>
+                    <div class="data-label">name = "李四"</div>
+                    <div style="font-size:11px;color:#4ecca3;">（B 已提交）</div>
+                </div>
+                <div class="chain-arrow">→</div>
+                <div class="chain-node">
+                    <div class="trx-label">trx_id = 90</div>
+                    <div class="data-label">name = "张三"</div>
+                </div>
+            </div>
+            <p class="mt-12">现在事务A 要做<strong>第二次 SELECT</strong>。</p>
+            <div class="feedback feedback-info">
+                <strong>${modeLabel} 模式下</strong>，${isRR
+                    ? 'ReadView <strong>复用第一次的</strong>，不重新创建！'
+                    : 'ReadView <strong>重新创建</strong>！'}
+            </div>
+            <div class="btn-group" style="justify-content:center;">
+                <button class="btn btn-primary" onclick="rcrr_goSelect2()">开始 SELECT②</button>
+            </div>
+        </div>`;
+    }
+
+    // SELECT 2
+    if (ls.step === 'select2' || ls.step === 'select2_judge') {
+        html += `<div class="card">
+            <h2>SELECT② —— ${isRR ? '复用第一次的 ReadView' : '重新创建 ReadView'}</h2>`;
+
+        if (isRR) {
+            // RR: reuse ReadView from SELECT 1
+            html += `<div class="feedback feedback-info">
+                    <strong>RR 模式</strong>：复用第一次 SELECT 的 ReadView，不创建新的。
+                </div>
+                <div class="readview-box">
+                    <div class="rv-title">复用的 ReadView（和 SELECT① 相同）</div>
+                    <div class="readview-fields">
+                        <div class="rv-field"><div class="label">creator_trx_id</div><div class="value">100</div></div>
+                        <div class="rv-field"><div class="label">m_ids</div><div class="value">[100, 101]</div></div>
+                        <div class="rv-field"><div class="label">min_trx_id</div><div class="value">100</div></div>
+                        <div class="rv-field"><div class="label">max_trx_id</div><div class="value">102</div></div>
+                    </div>
+                </div>`;
+            if (ls.step === 'select2') {
+                html += `<div class="btn-group" style="justify-content:center;">
+                    <button class="btn btn-primary" onclick="rcrr_s2StartJudge()">开始沿版本链判断</button>
+                </div>`;
+            }
+        } else {
+            // RC: build new ReadView
+            html += `<div class="feedback feedback-info">
+                    <strong>RC 模式</strong>：重新创建 ReadView！此刻事务B(101)已经提交，只有事务A(100)还没提交。
+                </div>`;
+            if (!ls.s2_midsCorrect) {
+                html += `<p class="mb-12">新的 m_ids 应该包含哪些事务？</p>
+                    <div class="txn-chips">
+                        ${[100, 101].map(id => `
+                            <div class="txn-chip ${ls.s2_mids.has(id) ? 'selected' : ''}" onclick="rcrr_s2ToggleMid(${id})">
+                                事务 ${id} ${id === 101 ? '（已提交）' : ''} ${ls.s2_mids.has(id) ? '✓' : ''}
+                            </div>`).join('')}
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="rcrr_s2CheckMids()">确认</button>
+                    </div>`;
+            } else {
+                html += `<div class="feedback feedback-correct">正确！新的 m_ids = [100]（只有A还没提交，B已经提交了）</div>
+                    <div class="readview-box">
+                        <div class="rv-title">SELECT② 的新 ReadView</div>
+                        <div class="readview-fields">
+                            <div class="rv-field"><div class="label">creator_trx_id</div><div class="value">100</div></div>
+                            <div class="rv-field"><div class="label">m_ids</div><div class="value">[100]</div></div>
+                            <div class="rv-field"><div class="label">min_trx_id</div><div class="value">100</div></div>
+                            <div class="rv-field"><div class="label">max_trx_id</div><div class="value">102</div></div>
+                        </div>
+                    </div>`;
+                if (ls.step === 'select2') {
+                    html += `<div class="btn-group" style="justify-content:center;">
+                        <button class="btn btn-primary" onclick="rcrr_s2StartJudge()">开始沿版本链判断</button>
+                    </div>`;
+                }
+            }
+        }
+
+        // Version chain judgment
+        if (ls.step === 'select2_judge') {
+            const chainData = [
+                { trx_id: 101, data: 'name = "李四"' },
+                { trx_id: 90, data: 'name = "张三"' },
+            ];
+            // Determine correct answers based on mode
+            let rv_mids, judgeResults;
+            if (isRR) {
+                rv_mids = [100, 101];
+                judgeResults = [
+                    { visible: false, rule: 'in_mids', ruleText: 'trx_id(101) 在 m_ids [100,101] 中 → 看不到（事务未提交……等等，它其实已经提交了，但创建 ReadView 时它还没提交！）' },
+                    { visible: true, rule: 'lt_min', ruleText: 'trx_id(90) < min_trx_id(100) → 能看到' },
+                ];
+            } else {
+                rv_mids = [100];
+                judgeResults = [
+                    { visible: true, rule: 'not_in_mids', ruleText: 'trx_id(101) 不在 m_ids [100] 中，且 100<=101<102 → 能看到（事务已提交）' },
+                    { visible: true, rule: 'lt_min', ruleText: 'trx_id(90) < min_trx_id(100) → 能看到' },
+                ];
+            }
+
+            html += `<hr class="separator">
+                <p class="mb-12">沿版本链判断（从新到旧）：</p>
+                <div class="chain-container">`;
+            for (let i = 0; i < chainData.length; i++) {
+                const c = chainData[i];
+                const judged = i < ls.s2_currentNode;
+                const isCurrent = i === ls.s2_currentNode && !ls.s2_done;
+                let cls = '';
+                if (judged) cls = ls.s2_judgments[i] ? 'visible-yes' : 'visible-no';
+                if (judged && ls.s2_judgments[i] && i === ls.s2_judgments.indexOf(true)) cls += ' highlight';
+                if (isCurrent) cls = 'active';
+                html += `<div class="chain-node ${cls}">
+                    <div class="trx-label">trx_id = ${c.trx_id}</div>
+                    <div class="data-label">${c.data}</div>
+                    ${judged ? `<div class="badge ${ls.s2_judgments[i] ? 'badge-yes' : 'badge-no'}">${ls.s2_judgments[i] ? '✓' : '✗'}</div>` : ''}
+                </div>`;
+                if (i < chainData.length - 1) html += `<div class="chain-arrow">→</div>`;
+            }
+            html += `</div>`;
+
+            if (!ls.s2_done && ls.s2_currentNode < chainData.length) {
+                const c = chainData[ls.s2_currentNode];
+                const j = judgeResults[ls.s2_currentNode];
+                html += `<div class="mt-12">
+                    <p>检查 trx_id = <strong>${c.trx_id}</strong>，${c.data}。能看到吗？</p>
+                    <div class="btn-group mb-12">
+                        <button class="btn ${ls.s2_vis === true ? 'btn-success' : 'btn-outline'}" onclick="rcrr_s2SelectVis(true)">能看到</button>
+                        <button class="btn ${ls.s2_vis === false ? 'btn-danger' : 'btn-outline'}" onclick="rcrr_s2SelectVis(false)">看不到</button>
+                    </div>`;
+                if (ls.s2_vis !== null) {
+                    const rv_min = 100, rv_max = 102;
+                    const reasons = [
+                        { key: 'lt_min', text: `trx_id(${c.trx_id}) < min_trx_id(${rv_min})，事务早已提交` },
+                        { key: 'gte_max', text: `trx_id(${c.trx_id}) >= max_trx_id(${rv_max})，事务在我之后才开始` },
+                        { key: 'in_mids', text: `trx_id(${c.trx_id}) 在 m_ids [${rv_mids.join(',')}] 中，事务还没提交` },
+                        { key: 'not_in_mids', text: `trx_id(${c.trx_id}) 不在 m_ids [${rv_mids.join(',')}] 中，事务已提交` },
+                    ];
+                    html += `<p class="mb-12">为什么？</p><div class="reason-list">`;
+                    reasons.forEach(r => {
+                        html += `<div class="reason-option ${ls.s2_reason === r.key ? 'selected' : ''}" onclick="rcrr_s2SelectReason('${r.key}')">
+                            <div class="reason-radio"></div><div>${r.text}</div>
+                        </div>`;
+                    });
+                    html += `</div>`;
+                    if (ls.s2_reason) {
+                        html += `<div class="btn-group" style="justify-content:center;">
+                            <button class="btn btn-primary" onclick="rcrr_s2Submit()">提交判断</button>
+                        </div>`;
+                    }
+                }
+                html += `</div>`;
+            }
+
+            if (ls.s2_done) {
+                const answerIdx = ls.s2_judgments.indexOf(true);
+                const answerData = chainData[answerIdx].data;
+                const resultName = answerData.includes('李四') ? '李四' : '张三';
+                ls.results.select1 = '张三';
+                ls.results.select2 = resultName;
+                html += `<div class="feedback feedback-correct mt-12">
+                    <strong>SELECT② 结果：${answerData}</strong>
+                </div>
+                <hr class="separator">
+                <table class="cmp-table">
+                    <tr><th></th><th>SELECT①</th><th>SELECT②</th></tr>
+                    <tr>
+                        <td>${modeLabel} 模式</td>
+                        <td>张三</td>
+                        <td class="highlight-cell">${resultName}</td>
+                    </tr>
+                </table>
+                <p class="mt-12 text-muted">${isRR
+                    ? '两次读到了<strong>相同</strong>的结果！因为 RR 复用了第一次的 ReadView，事务B 的修改"看不到"。这就是<strong>可重复读</strong>。'
+                    : '两次读到了<strong>��同</strong>的结果！因为 RC 重新创建了 ReadView，事务B 的修改已提交，"看得到"了。'
+                }</p>
+                <div class="btn-group" style="justify-content:center;">
+                    <button class="btn btn-success" onclick="levelComplete()">
+                        ${isRR ? '完成！查看 RC vs RR 对比' : '下一关：RR 模式'}
+                    </button>
+                </div>`;
+            }
+        }
+
+        if (ls.feedback && (ls.step === 'select2' || ls.step === 'select2_judge')) {
+            html += `<div class="feedback ${ls.feedback.type} mt-12">${ls.feedback.msg}</div>`;
+        }
+        html += `</div>`;
+    }
+
+    return html;
+}
+
+// RC/RR shared handlers
+function rcrr_goSelect1() { state.levelState.step = 'select1'; state.levelState.feedback = null; render(); }
+function rcrr_s1ToggleMid(id) {
+    const ls = state.levelState;
+    if (ls.s1_midsCorrect) return;
+    ls.s1_mids.has(id) ? ls.s1_mids.delete(id) : ls.s1_mids.add(id);
+    ls.feedback = null;
+    render();
+}
+function rcrr_s1CheckMids() {
+    const ls = state.levelState;
+    if (ls.s1_mids.has(100) && ls.s1_mids.has(101) && ls.s1_mids.size === 2) {
+        ls.s1_midsCorrect = true;
+        ls.feedback = null;
+    } else {
+        ls.feedback = { type: 'feedback-wrong', msg: '此刻事务A(100)和事务B(101)都还没提交，都应该在 m_ids 中。' };
+    }
+    render();
+}
+function rcrr_goMiddle() { state.levelState.step = 'middle'; state.levelState.feedback = null; render(); }
+function rcrr_goSelect2() { state.levelState.step = 'select2'; state.levelState.feedback = null; render(); }
+function rcrr_s2ToggleMid(id) {
+    const ls = state.levelState;
+    if (ls.s2_midsCorrect) return;
+    ls.s2_mids.has(id) ? ls.s2_mids.delete(id) : ls.s2_mids.add(id);
+    ls.feedback = null;
+    render();
+}
+function rcrr_s2CheckMids() {
+    const ls = state.levelState;
+    if (ls.s2_mids.has(100) && !ls.s2_mids.has(101) && ls.s2_mids.size === 1) {
+        ls.s2_midsCorrect = true;
+        ls.feedback = null;
+    } else if (ls.s2_mids.has(101)) {
+        ls.feedback = { type: 'feedback-wrong', msg: '事务B(101)已经<strong>提交</strong>了，不应该在 m_ids 中！' };
+    } else {
+        ls.feedback = { type: 'feedback-wrong', msg: '事务A(100)还没提交，应该在 m_ids 中。' };
+    }
+    render();
+}
+function rcrr_s2StartJudge() {
+    const ls = state.levelState;
+    if (!ls.isRR && !ls.s2_midsCorrect) return;
+    ls.step = 'select2_judge';
+    ls.feedback = null;
+    render();
+}
+function rcrr_s2SelectVis(val) { state.levelState.s2_vis = val; state.levelState.s2_reason = null; state.levelState.feedback = null; render(); }
+function rcrr_s2SelectReason(key) { state.levelState.s2_reason = key; state.levelState.feedback = null; render(); }
+function rcrr_s2Submit() {
+    const ls = state.levelState;
+    const isRR = ls.isRR || false;
+    const judgeResults = isRR
+        ? [{ visible: false, rule: 'in_mids' }, { visible: true, rule: 'lt_min' }]
+        : [{ visible: true, rule: 'not_in_mids' }, { visible: true, rule: 'lt_min' }];
+    const j = judgeResults[ls.s2_currentNode];
+    if (ls.s2_vis === j.visible && ls.s2_reason === j.rule) {
+        ls.s2_judgments.push(j.visible);
+        if (j.visible) {
+            ls.s2_done = true;
+        } else {
+            ls.s2_currentNode++;
+        }
+        ls.s2_vis = null;
+        ls.s2_reason = null;
+        ls.feedback = null;
+    } else {
+        const chainData = [{ trx_id: 101 }, { trx_id: 90 }];
+        const rv_mids = isRR ? [100, 101] : [100];
+        const c = chainData[ls.s2_currentNode];
+        if (ls.s2_vis !== j.visible) {
+            if (j.visible) {
+                ls.feedback = { type: 'feedback-wrong', msg: `trx_id(${c.trx_id}) 不在 m_ids [${rv_mids.join(',')}] 中，说明事务已提交，你应该<strong>能看到</strong>。` };
+            } else {
+                ls.feedback = { type: 'feedback-wrong', msg: `trx_id(${c.trx_id}) 在 m_ids [${rv_mids.join(',')}] 中，说明创建 ReadView 时事务还没提交，你<strong>看不到</strong>。` };
+            }
+        } else {
+            ls.feedback = { type: 'feedback-wrong', msg: '可见性判断对了，但理由不对，再想想？' };
+        }
+    }
+    render();
+}
+
+// ===== LEVEL 6: Challenge =====
+function initLevel6() {
+    state.levelState = {
+        step: 'scene',
+        phase6: 'rc', // rc then rr
+        // RC phase
+        rc_mids: new Set(),
+        rc_midsCorrect: false,
+        rc_currentNode: 0,
+        rc_judgments: [],
+        rc_vis: null,
+        rc_reason: null,
+        rc_done: false,
+        rc_result: null,
+        // RR phase
+        rr_rvShown: false,
+        rr_currentNode: 0,
+        rr_judgments: [],
+        rr_vis: null,
+        rr_reason: null,
+        rr_done: false,
+        rr_result: null,
+        feedback: null,
+    };
+}
+
+function renderLevel6() {
+    const ls = state.levelState;
+    let html = '';
+
+    // Scene
+    html += `<div class="card">
+        <p class="mb-12"><strong>场景：</strong></p>
+        <div class="timeline">
+            <div class="timeline-row">
+                <div class="timeline-label txn-a">事务A(100)</div>
+                <div class="timeline-bar">
+                    <div class="timeline-event tl-a">BEGIN</div>
+                    <div class="timeline-segment seg-a"></div>
+                    <div class="timeline-event tl-a">SELECT①</div>
+                    <div class="timeline-segment seg-a"></div>
+                    <div class="timeline-segment seg-a"></div>
+                    <div class="timeline-segment seg-a"></div>
+                    <div class="timeline-segment seg-a"></div>
+                    <div class="timeline-event tl-a ${ls.step === 'judge' ? 'tl-highlight' : ''}">SELECT②</div>
+                    <div class="timeline-segment seg-a"></div>
+                </div>
+            </div>
+            <div class="timeline-row">
+                <div class="timeline-label txn-b">事务B(101)</div>
+                <div class="timeline-bar">
+                    <div class="timeline-segment seg-b"></div>
+                    <div class="timeline-event tl-b">BEGIN</div>
+                    <div class="timeline-segment seg-b"></div>
+                    <div class="timeline-event tl-b">UPDATE "李四"</div>
+                    <div class="timeline-segment seg-b"></div>
+                    <div class="timeline-event tl-b" style="background:#4ecca3;color:#111;">COMMIT</div>
+                    <div class="timeline-segment seg-b"></div>
+                    <div class="timeline-segment seg-b"></div>
+                </div>
+            </div>
+            <div class="timeline-row">
+                <div class="timeline-label txn-c">事务C(102)</div>
+                <div class="timeline-bar">
+                    <div class="timeline-segment seg-c"></div>
+                    <div class="timeline-segment seg-c"></div>
+                    <div class="timeline-segment seg-c"></div>
+                    <div class="timeline-segment seg-c"></div>
+                    <div class="timeline-event tl-c">BEGIN</div>
+                    <div class="timeline-segment seg-c"></div>
+                    <div class="timeline-event tl-c">UPDATE "王五"</div>
+                    <div class="timeline-segment seg-c"></div>
+                </div>
+            </div>
+        </div>
+        <p class="text-muted" style="margin-top:8px;">
+            初始数据：name = "张三"（trx_id = 90）<br>
+            事务B(101)：改为"李四"并<span class="text-green">提交</span><br>
+            事务C(102)：改为"王五"但<span class="text-yellow">未提交</span><br>
+            事务A 的 SELECT① 在所有修改之前，SELECT② 在所有修改之后。<br>
+            <strong>问题：SELECT② 在 RC 和 RR 下分别读到什么？</strong>
+        </p>
+    </div>`;
+
+    // Version chain at SELECT②
+    html += `<div class="card">
+        <p class="mb-12">SELECT② 时刻的版本链：</p>
+        <div class="chain-container">
+            <div class="chain-node ${getL6NodeClass(0)}">
+                <div class="trx-label">trx_id = 102</div>
+                <div class="data-label">name = "王五"</div>
+                <div style="font-size:11px;color:#f39c12;">（C 未提交）</div>
+                ${getL6Badge(0)}
+            </div>
+            <div class="chain-arrow">→</div>
+            <div class="chain-node ${getL6NodeClass(1)}">
+                <div class="trx-label">trx_id = 101</div>
+                <div class="data-label">name = "李四"</div>
+                <div style="font-size:11px;color:#4ecca3;">（B 已提交）</div>
+                ${getL6Badge(1)}
+            </div>
+            <div class="chain-arrow">→</div>
+            <div class="chain-node ${getL6NodeClass(2)}">
+                <div class="trx-label">trx_id = 90</div>
+                <div class="data-label">name = "张三"</div>
+                <div style="font-size:11px;color:#4ecca3;">（早已提交）</div>
+                ${getL6Badge(2)}
+            </div>
+        </div>
+    </div>`;
+
+    if (ls.step === 'scene') {
+        html += `<div class="card text-center">
+            <button class="btn btn-primary" onclick="l6_start()">开始挑战：先做 RC 模式</button>
+        </div>`;
+    }
+
+    // RC Phase
+    if (ls.step === 'judge' && ls.phase6 === 'rc') {
+        html += `<div class="card">
+            <h2>RC 模式下的 SELECT②</h2>
+            <div class="feedback feedback-info">RC 模式：重新创建 ReadView。此刻 A(100) 未提交，B(101) 已提交，C(102) 未提交。</div>`;
+
+        if (!ls.rc_midsCorrect) {
+            html += `<p class="mb-12">m_ids 应该包含？</p>
+                <div class="txn-chips">
+                    ${[100, 101, 102].map(id => `
+                        <div class="txn-chip ${ls.rc_mids.has(id) ? 'selected' : ''}" onclick="l6_rcToggleMid(${id})">
+                            事务 ${id} ${ls.rc_mids.has(id) ? '✓' : ''}
+                        </div>`).join('')}
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="l6_rcCheckMids()">确认 m_ids</button>
+                </div>`;
+        } else {
+            html += `<div class="readview-box">
+                    <div class="rv-title">RC 模式 SELECT② 的 ReadView</div>
+                    <div class="readview-fields">
+                        <div class="rv-field"><div class="label">creator_trx_id</div><div class="value">100</div></div>
+                        <div class="rv-field"><div class="label">m_ids</div><div class="value">[100, 102]</div></div>
+                        <div class="rv-field"><div class="label">min_trx_id</div><div class="value">100</div></div>
+                        <div class="rv-field"><div class="label">max_trx_id</div><div class="value">103</div></div>
+                    </div>
+                </div>`;
+
+            if (!ls.rc_done) {
+                const chainNodes = [
+                    { trx_id: 102, data: '"王五"', vis: false, rule: 'in_mids', text: 'trx_id(102) 在 m_ids [100,102] 中 → 看不到' },
+                    { trx_id: 101, data: '"李四"', vis: true, rule: 'not_in_mids', text: 'trx_id(101) 不在 m_ids [100,102] 中，100<=101<103 → 能看到' },
+                    { trx_id: 90, data: '"张三"', vis: true, rule: 'lt_min', text: 'trx_id(90) < 100 → 能看到' },
+                ];
+                const c = chainNodes[ls.rc_currentNode];
+                html += `<p class="mt-12">检查 trx_id = <strong>${c.trx_id}</strong>（${c.data}），能看到吗？</p>
+                    <div class="btn-group mb-12">
+                        <button class="btn ${ls.rc_vis === true ? 'btn-success' : 'btn-outline'}" onclick="l6_rcVis(true)">能看到</button>
+                        <button class="btn ${ls.rc_vis === false ? 'btn-danger' : 'btn-outline'}" onclick="l6_rcVis(false)">看不到</button>
+                    </div>`;
+                if (ls.rc_vis !== null) {
+                    const reasons = [
+                        { key: 'lt_min', text: `trx_id < min_trx_id(100)，早已提交` },
+                        { key: 'gte_max', text: `trx_id >= max_trx_id(103)，之后才开始` },
+                        { key: 'in_mids', text: `trx_id 在 m_ids [100,102] 中，未提交` },
+                        { key: 'not_in_mids', text: `trx_id 不在 m_ids 中，已提交` },
+                    ];
+                    html += `<div class="reason-list">`;
+                    reasons.forEach(r => {
+                        html += `<div class="reason-option ${ls.rc_reason === r.key ? 'selected' : ''}" onclick="l6_rcReason('${r.key}')">
+                            <div class="reason-radio"></div><div>${r.text}</div>
+                        </div>`;
+                    });
+                    html += `</div>`;
+                    if (ls.rc_reason) {
+                        html += `<div class="btn-group" style="justify-content:center;">
+                            <button class="btn btn-primary" onclick="l6_rcSubmit()">提交</button>
+                        </div>`;
+                    }
+                }
+            } else {
+                ls.rc_result = '李四';
+                html += `<div class="feedback feedback-correct mt-12">
+                    <strong>RC 模式 SELECT② 结果：name = "李四"</strong>
+                </div>
+                <div class="btn-group" style="justify-content:center;">
+                    <button class="btn btn-primary" onclick="l6_goRR()">继续：RR 模式</button>
+                </div>`;
+            }
+        }
+
+        if (ls.feedback && ls.phase6 === 'rc') {
+            html += `<div class="feedback ${ls.feedback.type} mt-12">${ls.feedback.msg}</div>`;
+        }
+        html += `</div>`;
+    }
+
+    // RR Phase
+    if (ls.step === 'judge' && ls.phase6 === 'rr') {
+        html += `<div class="card">
+            <h2>RR 模式下的 SELECT②</h2>
+            <div class="feedback feedback-info">
+                RR 模式：复用 SELECT① 时的 ReadView。<br>
+                SELECT① 时只有事务A(100)在活跃（B 和 C 还没开始）。
+            </div>
+            <div class="readview-box">
+                <div class="rv-title">复用的 ReadView（来自 SELECT①）</div>
+                <div class="readview-fields">
+                    <div class="rv-field"><div class="label">creator_trx_id</div><div class="value">100</div></div>
+                    <div class="rv-field"><div class="label">m_ids</div><div class="value">[100]</div></div>
+                    <div class="rv-field"><div class="label">min_trx_id</div><div class="value">100</div></div>
+                    <div class="rv-field"><div class="label">max_trx_id</div><div class="value">101</div></div>
+                </div>
+            </div>`;
+
+        if (!ls.rr_done) {
+            const chainNodes = [
+                { trx_id: 102, data: '"王五"', vis: false, rule: 'gte_max', text: 'trx_id(102) >= max_trx_id(101) → 看不到' },
+                { trx_id: 101, data: '"李四"', vis: false, rule: 'gte_max', text: 'trx_id(101) >= max_trx_id(101) → 看不到' },
+                { trx_id: 90, data: '"张三"', vis: true, rule: 'lt_min', text: 'trx_id(90) < min_trx_id(100) → 能看到' },
+            ];
+            const c = chainNodes[ls.rr_currentNode];
+            html += `<p class="mt-12">检查 trx_id = <strong>${c.trx_id}</strong>（${c.data}），能看到吗？</p>
+                <div class="btn-group mb-12">
+                    <button class="btn ${ls.rr_vis === true ? 'btn-success' : 'btn-outline'}" onclick="l6_rrVis(true)">能看到</button>
+                    <button class="btn ${ls.rr_vis === false ? 'btn-danger' : 'btn-outline'}" onclick="l6_rrVis(false)">看不到</button>
+                </div>`;
+            if (ls.rr_vis !== null) {
+                const reasons = [
+                    { key: 'lt_min', text: `trx_id < min_trx_id(100)，早已提交` },
+                    { key: 'gte_max', text: `trx_id >= max_trx_id(101)，之后才开始` },
+                    { key: 'in_mids', text: `trx_id 在 m_ids [100] 中，未提交` },
+                    { key: 'not_in_mids', text: `trx_id 不在 m_ids 中，已提交` },
+                ];
+                html += `<div class="reason-list">`;
+                reasons.forEach(r => {
+                    html += `<div class="reason-option ${ls.rr_reason === r.key ? 'selected' : ''}" onclick="l6_rrReason('${r.key}')">
+                        <div class="reason-radio"></div><div>${r.text}</div>
+                    </div>`;
+                });
+                html += `</div>`;
+                if (ls.rr_reason) {
+                    html += `<div class="btn-group" style="justify-content:center;">
+                        <button class="btn btn-primary" onclick="l6_rrSubmit()">提交</button>
+                    </div>`;
+                }
+            }
+        } else {
+            ls.rr_result = '张三';
+            html += `<div class="feedback feedback-correct mt-12">
+                <strong>RR 模式 SELECT② 结果：name = "张三"</strong>
+            </div>
+            <hr class="separator">
+            <h3 style="color:#7c83ff; margin-bottom:12px;">终极对比</h3>
+            <table class="cmp-table">
+                <tr><th></th><th>SELECT①</th><th>SELECT②</th><th>原因</th></tr>
+                <tr>
+                    <td>RC 模式</td><td>张三</td>
+                    <td class="highlight-cell">李四</td>
+                    <td class="text-muted" style="font-size:12px;">重新创建 ReadView，看到了 B 的提交</td>
+                </tr>
+                <tr>
+                    <td>RR 模式</td><td>张三</td>
+                    <td class="highlight-cell">张三</td>
+                    <td class="text-muted" style="font-size:12px;">复用旧 ReadView，B 和 C 都看不到</td>
+                </tr>
+            </table>
+            <div class="btn-group" style="justify-content:center;">
+                <button class="btn btn-success" onclick="levelComplete()">通关！</button>
+            </div>`;
+        }
+
+        if (ls.feedback && ls.phase6 === 'rr') {
+            html += `<div class="feedback ${ls.feedback.type} mt-12">${ls.feedback.msg}</div>`;
+        }
+        html += `</div>`;
+    }
+
+    return html;
+}
+
+function getL6NodeClass(idx) {
+    const ls = state.levelState;
+    const phase = ls.phase6;
+    const judgments = phase === 'rc' ? ls.rc_judgments : ls.rr_judgments;
+    const currentNode = phase === 'rc' ? ls.rc_currentNode : ls.rr_currentNode;
+    const done = phase === 'rc' ? ls.rc_done : ls.rr_done;
+    if (ls.step !== 'judge') return '';
+    if (idx < judgments.length) {
+        let cls = judgments[idx] ? 'visible-yes' : 'visible-no';
+        if (judgments[idx] && idx === judgments.indexOf(true)) cls += ' highlight';
+        return cls;
+    }
+    if (idx === currentNode && !done) return 'active';
+    return '';
+}
+
+function getL6Badge(idx) {
+    const ls = state.levelState;
+    const phase = ls.phase6;
+    const judgments = phase === 'rc' ? ls.rc_judgments : ls.rr_judgments;
+    if (ls.step !== 'judge' || idx >= judgments.length) return '';
+    return `<div class="badge ${judgments[idx] ? 'badge-yes' : 'badge-no'}">${judgments[idx] ? '✓' : '✗'}</div>`;
+}
+
+function l6_start() { state.levelState.step = 'judge'; render(); }
+function l6_rcToggleMid(id) {
+    const ls = state.levelState;
+    ls.rc_mids.has(id) ? ls.rc_mids.delete(id) : ls.rc_mids.add(id);
+    ls.feedback = null;
+    render();
+}
+function l6_rcCheckMids() {
+    const ls = state.levelState;
+    if (ls.rc_mids.has(100) && !ls.rc_mids.has(101) && ls.rc_mids.has(102) && ls.rc_mids.size === 2) {
+        ls.rc_midsCorrect = true;
+        ls.feedback = null;
+    } else {
+        let msg = '再想想：';
+        if (ls.rc_mids.has(101)) msg += ' 事务B(101)已经提交了，不应该在 m_ids 中。';
+        if (!ls.rc_mids.has(100)) msg += ' 事务A(100)还没提交。';
+        if (!ls.rc_mids.has(102)) msg += ' 事务C(102)还没提交。';
+        ls.feedback = { type: 'feedback-wrong', msg };
+    }
+    render();
+}
+function l6_rcVis(val) { state.levelState.rc_vis = val; state.levelState.rc_reason = null; state.levelState.feedback = null; render(); }
+function l6_rcReason(key) { state.levelState.rc_reason = key; state.levelState.feedback = null; render(); }
+function l6_rcSubmit() {
+    const ls = state.levelState;
+    const results = [
+        { vis: false, rule: 'in_mids' },
+        { vis: true, rule: 'not_in_mids' },
+        { vis: true, rule: 'lt_min' },
+    ];
+    const j = results[ls.rc_currentNode];
+    if (ls.rc_vis === j.vis && ls.rc_reason === j.rule) {
+        ls.rc_judgments.push(j.vis);
+        if (j.vis) { ls.rc_done = true; }
+        else { ls.rc_currentNode++; }
+        ls.rc_vis = null; ls.rc_reason = null; ls.feedback = null;
+    } else {
+        ls.feedback = { type: 'feedback-wrong', msg: '不太对，再想想。注意看 ReadView 中的 m_ids 和 max_trx_id。' };
+    }
+    render();
+}
+function l6_goRR() {
+    const ls = state.levelState;
+    ls.phase6 = 'rr';
+    ls.feedback = null;
+    render();
+}
+function l6_rrVis(val) { state.levelState.rr_vis = val; state.levelState.rr_reason = null; state.levelState.feedback = null; render(); }
+function l6_rrReason(key) { state.levelState.rr_reason = key; state.levelState.feedback = null; render(); }
+function l6_rrSubmit() {
+    const ls = state.levelState;
+    const results = [
+        { vis: false, rule: 'gte_max' },
+        { vis: false, rule: 'gte_max' },
+        { vis: true, rule: 'lt_min' },
+    ];
+    const j = results[ls.rr_currentNode];
+    if (ls.rr_vis === j.vis && ls.rr_reason === j.rule) {
+        ls.rr_judgments.push(j.vis);
+        if (j.vis) { ls.rr_done = true; }
+        else { ls.rr_currentNode++; }
+        ls.rr_vis = null; ls.rr_reason = null; ls.feedback = null;
+    } else {
+        ls.feedback = { type: 'feedback-wrong', msg: '不太对，注意这个 ReadView 的 max_trx_id 是 101（SELECT① 时创建的）。' };
+    }
+    render();
+}
+
+// ===== GAME OVER =====
+function renderGameOver() {
+    app.innerHTML = `
+        <div class="header">
+            <h1>恭喜通关！</h1>
+            <p class="subtitle">你已经完整掌握了 MVCC 的核心机制</p>
+            ${renderProgressBar()}
+        </div>
+        <div class="card">
+            <h2>知识总结</h2>
+            <h3>MVCC = 多版本 + ReadView + 可见性判断</h3>
+            <table class="cmp-table">
+                <tr><th>概念</th><th>作用</th></tr>
+                <tr><td>版本链</td><td>每行数据的多个历史版本，通过 roll_pointer 串联</td></tr>
+                <tr><td>trx_id</td><td>记录每个版本是被哪个事务修改的</td></tr>
+                <tr><td>ReadView</td><td>事务读数据时的"快照"，记录此刻哪些事务未提交</td></tr>
+                <tr><td>可见性规则</td><td>根据 trx_id 与 ReadView 的关系，判断版本是否可见</td></tr>
+            </table>
+            <hr class="separator">
+            <h2>RC vs RR 的本质区别</h2>
+            <table class="cmp-table">
+                <tr><th></th><th>RC（读已提交）</th><th>RR（可重复读）</th></tr>
+                <tr><td>ReadView 创建</td><td>每次 SELECT 都新建</td><td class="highlight-cell">只第一次 SELECT 时创建</td></tr>
+                <tr><td>能否看到别人新提交的</td><td>能</td><td class="highlight-cell">不能</td></tr>
+                <tr><td>同事务多次读</td><td>可能不同</td><td class="highlight-cell">一定相同</td></tr>
+                <tr><td>MySQL 默认</td><td></td><td class="highlight-cell">默认</td></tr>
+            </table>
+            <hr class="separator">
+            <p class="text-muted text-center">MVCC 的核心价值：<strong>读不阻塞写，写不阻塞读</strong>，大大提升了并发性能。</p>
+            <div class="btn-group" style="justify-content:center;">
+                <button class="btn btn-outline" onclick="restartGame()">再玩一次</button>
+            </div>
+        </div>`;
+}
+
+// ===== GAME FLOW =====
+function startGame() {
+    state.screen = 'level';
+    state.currentLevel = 0;
+    state.phase = 'intro';
+    state.levelScores = [];
+    render();
+}
+
+function startLevelPlay() {
+    state.phase = 'play';
+    const inits = [initLevel1, initLevel2, initLevel3, initLevel4, initLevel5, initLevel6];
+    inits[state.currentLevel]();
+    render();
+}
+
+function levelComplete() {
+    state.levelScores[state.currentLevel] = { results: state.levelState.results || {} };
+    state.phase = 'complete';
+    render();
+}
+
+function nextLevel() {
+    state.currentLevel++;
+    state.phase = 'intro';
+    state.levelState = {};
+    render();
+}
+
+function showGameOver() {
+    state.screen = 'gameover';
+    TopbarProgress.completeAll();
+    render();
+}
+
+function restartGame() {
+    state = { screen: 'welcome', currentLevel: 0, phase: 'intro', levelState: {}, levelScores: [] };
+    render();
+}
+
+// ===== INIT =====
+render();
+</script>
+</body>
+</html>
+

@@ -14,29 +14,31 @@ study_game/
 ├── index.html              ← 首页，按分类展示
 │
 ├── go/                     ← Go 运行时 & 并发
-│   ├── gc_simulator/       第1批
-│   ├── concurrency_court/  第1批
-│   ├── goroutine_detective/第1批
-│   └── gmp_scheduler/      第2批
+│   ├── gc_simulator/       ✅ 第1批 已完成
+│   ├── concurrency_court/  ✅ 第1批 已完成
+│   ├── goroutine_detective/✅ 第1批 已完成
+│   └── gmp_scheduler/      ✅ 第2批 已完成
+│
+├── mysql/                  ← MySQL（续）
 │
 ├── redis/                  ← Redis
-│   ├── redis_diagnosis/    第1批
-│   └── redis_ha/           第3批
+│   ├── redis_diagnosis/    ✅ 第1批 已完成
+│   └── redis_ha/           ⬜ 第3批
 │
 ├── mysql/                  ← MySQL
-│   ├── mvcc/               ✅ 迁移自根目录
-│   ├── mysql_lock/         第2批
-│   ├── mysql_index/        第3批
-│   └── mysql_recovery/     第3批
+│   ├── mvcc/               ✅ 迁移完成
+│   ├── mysql_lock/         ✅ 第2批 已完成
+│   ├── mysql_index/        ✅ 第3批 已完成
+│   └── mysql_recovery/     ✅ 第3批 已完成
 │
 ├── network/                ← 计算机网络
-│   ├── io_multiplexing/    ✅ 迁移自根目录
-│   └── tcp_handshake/      第3批
+│   ├── io_multiplexing/    ✅ 迁移完成
+│   └── tcp_handshake/      ✅ 第3批 已完成
 │
 └── distributed/            ← 分布式 & 系统设计
-    ├── rate_limiter/       第2批
-    ├── dist_lock/          第3批
-    └── mongodb_selector/   第3批
+    ├── rate_limiter/       ✅ 第2批 已完成
+    ├── dist_lock/          ✅ 第3批 已完成
+    └── mongodb_selector/   ✅ 第3批 已完成
 ```
 
 **路径约定**：子目录游戏的相对路径需用 `../../shared.css` / `../../game-utils.js`，后退按钮用绝对路径 `/study_game/` 不受影响。
@@ -221,27 +223,27 @@ study_game/
 
 ```
 迁移（开发前先做）
-  ✦ mvcc/             → mysql/mvcc/
-  ✦ io_multiplexing/  → network/io_multiplexing/
+  ✅ mvcc/             → mysql/mvcc/
+  ✅ io_multiplexing/  → network/io_multiplexing/
 
-第一批（面试核心高频）
-  ① go/gc_simulator
-  ② go/concurrency_court
-  ③ go/goroutine_detective
-  ④ redis/redis_diagnosis
+第一批（面试核心高频）✅ 已完成
+  ✅ ① go/gc_simulator         — GC 三色标记模拟器（5关）
+  ✅ ② go/concurrency_court    — 并发 Bug 代码审判（6关）
+  ✅ ③ go/goroutine_detective  — 协程泄漏侦探（5关）
+  ✅ ④ redis/redis_diagnosis   — Redis 故障诊断室（5关）
 
-第二批（调度 + 数据库深度）
-  ⑤ go/gmp_scheduler
-  ⑥ mysql/mysql_lock
-  ⑦ distributed/rate_limiter
+第二批（调度 + 数据库深度）✅ 已完成
+  ✅ ⑤ go/gmp_scheduler       — GMP 调度模拟器（5关）
+  ✅ ⑥ mysql/mysql_lock        — MySQL 锁冲突判断（5关）
+  ✅ ⑦ distributed/rate_limiter — 流量风暴生存（5关）
 
-第三批（按需开发）
-  ⑧  mysql/mysql_index
-  ⑨  redis/redis_ha
-  ⑩  network/tcp_handshake
-  ⑪  distributed/dist_lock
-  ⑫  mysql/mysql_recovery
-  ⑬  distributed/mongodb_selector
+第三批（进阶补全）✅ 已完成
+  ✅ ⑧  mysql/mysql_index          — SQL 查询路径追踪器（5关）
+  ✅ ⑨  redis/redis_ha             — Redis 高可用演练（5关）
+  ✅ ⑩  network/tcp_handshake      — TCP 握手挥手模拟器（5关）
+  ✅ ⑪  distributed/dist_lock      — 分布式锁方案裁判（4关）
+  ✅ ⑫  mysql/mysql_recovery       — MySQL 崩溃恢复（4关）
+  ✅ ⑬  distributed/mongodb_selector — MongoDB 场景选型（4关）
 ```
 
 ---

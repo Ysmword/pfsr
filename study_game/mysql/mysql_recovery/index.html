@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MySQL 崩溃恢复 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root { --accent: #f59e0b; --accent-dim: rgba(245,158,11,0.2); }
+
+    /* ── WAL 写入时间轴 ── */
+    .wal-timeline { display: flex; flex-direction: column; gap: 0; margin: 12px 0; position: relative; }
+    .wal-step {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 14px; border: 1px solid var(--border);
+      background: var(--surface-alt); position: relative;
+    }
+    .wal-step:first-child { border-radius: var(--r-sm) var(--r-sm) 0 0; }
+    .wal-step:last-child  { border-radius: 0 0 var(--r-sm) var(--r-sm); }
+    .wal-step + .wal-step { border-top: none; }
+    .step-num { width: 24px; height: 24px; border-radius: 50%; background: var(--border); color: var(--text-dim); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+    .step-desc { font-size: 13px; color: var(--text-muted); flex: 1; }
+    .step-tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+    .tag-redo  { background: rgba(245,158,11,0.2); color: #f59e0b; }
+    .tag-bin   { background: rgba(59,130,246,0.2); color: #3b82f6; }
+    .tag-flush { background: rgba(16,185,129,0.2); color: #10b981; }
+    .tag-commit{ background: rgba(124,131,255,0.2); color: #a78bfa; }
+    .wal-step.highlight { background: rgba(239,68,68,0.08); border-color: #ef4444; }
+
+    /* 崩溃点 */
+    .crash-marker {
+      display: flex; align-items: center; gap: 10px;
+      background: rgba(239,68,68,0.1); border: 1.5px dashed #ef4444;
+      border-radius: var(--r-sm); padding: 8px 14px; margin: 8px 0;
+      font-size: 13px; color: #ef4444; font-weight: 700;
+    }
+
+    /* 选项 */
+    .opt-col { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .opt-btn { padding: 10px 14px; border-radius: var(--r-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--text-muted); cursor: pointer; font-size: 13px; text-align: left; transition: all 0.2s; }
+    .opt-btn:hover { border-color: var(--accent); color: var(--text); }
+    .opt-btn.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .opt-btn.ok  { border-color: #10b981; background: rgba(16,185,129,0.1); color: #10b981; }
+    .opt-btn.bad { border-color: #ef4444; background: rgba(239,68,68,0.1); color: #ef4444; }
+
+    .info-box { background: rgba(245,158,11,0.07); border: 1px solid rgba(245,158,11,0.25); border-radius: var(--r-sm); padding: 10px 14px; font-size: 13px; color: var(--text-muted); line-height: 1.7; margin: 8px 0; }
+    .info-box strong { color: var(--accent); }
+
+    .feedback-card { border-radius: var(--r-md); padding: 16px 20px; display: none; animation: fadeIn 0.3s; }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; } }
+  </style>
+</head>
+<body>
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">MySQL 崩溃恢复</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">⚡</span>
+    <h1 class="game-intro__title">MySQL 崩溃恢复</h1>
+    <p class="game-intro__desc">
+      服务器在事务中途断电！<br>
+      标注 WAL（redo log / binlog）写入时机，<br>
+      判断哪些数据恢复得了、哪些永远丢了。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 8 分钟</span></div>
+      <div>🎯 <span>4 关</span></div>
+      <div>✦ <span>WAL · redo log · binlog · 两阶段提交</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开始恢复 →</button>
+  </div>
+</div>
+
+<!-- 关1：WAL 写入顺序 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 1 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">WAL 写入顺序</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        一条 UPDATE 事务提交时，InnoDB 按以下顺序操作。把步骤 <strong style="color:var(--text);">1-5</strong> 拖入正确位置，或直接选择正确的写入顺序：
+      </p>
+      <div class="info-box">
+        <strong>核心机制：</strong><br>
+        • <strong>redo log</strong>：InnoDB 引擎层，记录物理变更，用于崩溃恢复<br>
+        • <strong>binlog</strong>：Server 层，记录逻辑变更，用于主从复制和时间点恢复<br>
+        • <strong>两阶段提交（2PC）</strong>：保证 redo log 和 binlog 一致性
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">以下哪个顺序正确描述了 InnoDB 事务提交时 WAL 的写入过程？</p>
+      <div class="opt-col" id="l1-opts">
+        <div class="opt-btn" onclick="pickOpt('1','a',this)">A. ① binlog → ② redo log prepare → ③ 数据刷盘 → ④ redo log commit</div>
+        <div class="opt-btn" onclick="pickOpt('1','b',this)">B. ① redo log prepare → ② binlog → ③ redo log commit → ④ 数据页刷盘（后台）</div>
+        <div class="opt-btn" onclick="pickOpt('1','c',this)">C. ① 数据页刷盘 → ② redo log → ③ binlog → ④ 提交</div>
+        <div class="opt-btn" onclick="pickOpt('1','d',this)">D. ① redo log → ② redo log commit → ③ binlog → ④ 数据刷盘</div>
+      </div>
+      <div id="l1-submit" style="text-align:center;display:none;">
+        <button class="btn btn-primary" onclick="submitL1()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关2：崩溃点判断 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 2 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">崩溃点判断</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">完整的两阶段提交流程如下：</p>
+      <div class="wal-timeline">
+        <div class="wal-step"><div class="step-num">1</div><div class="step-desc">写 redo log，标记为 <strong>prepare</strong> 状态</div><div class="step-tag tag-redo">redo</div></div>
+        <div class="wal-step" id="crash-a"><div class="step-num">💥</div><div class="step-desc" style="color:#ef4444;font-weight:700;">崩溃点 A</div></div>
+        <div class="wal-step"><div class="step-num">2</div><div class="step-desc">写 binlog 并 fsync 到磁盘</div><div class="step-tag tag-bin">binlog</div></div>
+        <div class="wal-step" id="crash-b"><div class="step-num">💥</div><div class="step-desc" style="color:#ef4444;font-weight:700;">崩溃点 B</div></div>
+        <div class="wal-step"><div class="step-num">3</div><div class="step-desc">写 redo log，标记为 <strong>commit</strong> 状态</div><div class="step-tag tag-commit">commit</div></div>
+        <div class="wal-step" id="crash-c"><div class="step-num">💥</div><div class="step-desc" style="color:#ef4444;font-weight:700;">崩溃点 C</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div id="l2-cases"></div>
+      <div id="l2-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL2()">提交全部</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l2-fb">
+      <div class="feedback-card__verdict" id="l2-vd"></div>
+      <p class="feedback-card__explain" id="l2-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(2)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关3：redo log vs binlog -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 3 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">redo log vs binlog</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">判断以下 4 个说法各属于 redo log 还是 binlog：</p>
+    </div>
+    <div id="l3-cases"></div>
+    <div id="l3-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL3()">提交全部</button>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关4：innodb_flush_log_at_trx_commit -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 4 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">持久化参数配置</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        <code style="color:var(--accent);">innodb_flush_log_at_trx_commit</code> 控制 redo log 刷盘时机：
+      </p>
+      <div style="overflow-x:auto;">
+        <table style="border-collapse:collapse;font-size:12px;width:100%;">
+          <tr style="background:var(--surface-alt);">
+            <th style="padding:8px;border:1px solid var(--border);color:var(--accent);">值</th>
+            <th style="padding:8px;border:1px solid var(--border);color:var(--text-muted);">行为</th>
+            <th style="padding:8px;border:1px solid var(--border);color:var(--text-muted);">风险</th>
+          </tr>
+          <tr>
+            <td style="padding:7px 8px;border:1px solid var(--border);text-align:center;font-weight:700;color:#ef4444;">0</td>
+            <td style="padding:7px 8px;border:1px solid var(--border);color:var(--text-muted);">每秒刷盘一次，提交时只写 OS 缓冲</td>
+            <td style="padding:7px 8px;border:1px solid var(--border);color:#ef4444;">最多丢 1 秒数据</td>
+          </tr>
+          <tr>
+            <td style="padding:7px 8px;border:1px solid var(--border);text-align:center;font-weight:700;color:#10b981;">1</td>
+            <td style="padding:7px 8px;border:1px solid var(--border);color:var(--text-muted);">每次提交都 fsync，最安全</td>
+            <td style="padding:7px 8px;border:1px solid var(--border);color:#10b981;">无数据丢失风险</td>
+          </tr>
+          <tr>
+            <td style="padding:7px 8px;border:1px solid var(--border);text-align:center;font-weight:700;color:#f59e0b;">2</td>
+            <td style="padding:7px 8px;border:1px solid var(--border);color:var(--text-muted);">每次提交写 OS 缓冲，每秒 fsync</td>
+            <td style="padding:7px 8px;border:1px solid var(--border);color:#f59e0b;">OS 崩溃丢 1 秒数据</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">金融支付系统，对数据安全性要求极高，<strong>不能丢任何一条</strong>提交的交易记录。应该配置？</p>
+      <div class="opt-col" id="l4a-opts">
+        <div class="opt-btn" onclick="pickL4('a','1',this)">innodb_flush_log_at_trx_commit = 1（每次提交都 fsync）</div>
+        <div class="opt-btn" onclick="pickL4('a','2',this)">innodb_flush_log_at_trx_commit = 2（性能更好，OS 崩溃才丢失）</div>
+        <div class="opt-btn" onclick="pickL4('a','0',this)">innodb_flush_log_at_trx_commit = 0（性能最高）</div>
+      </div>
+      <p style="font-size:13px;color:var(--text-muted);margin:12px 0 8px;">同时，binlog 也需要配置 <code style="color:var(--accent);">sync_binlog</code>，金融场景应该设为？</p>
+      <div class="opt-col" id="l4b-opts">
+        <div class="opt-btn" onclick="pickL4('b','1',this)">sync_binlog = 1（每次提交都 fsync binlog）</div>
+        <div class="opt-btn" onclick="pickL4('b','0',this)">sync_binlog = 0（依赖 OS 刷盘，性能最好）</div>
+        <div class="opt-btn" onclick="pickL4('b','100',this)">sync_binlog = 100（每 100 次提交刷一次）</div>
+      </div>
+      <div id="l4-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL4()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(4)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">恢复成功！</div>
+      <p class="complete-screen__desc">
+        你已掌握 MySQL 崩溃恢复的全部核心：<br>
+        WAL 两阶段提交 · redo log vs binlog ·<br>
+        崩溃点数据安全性 · 持久化参数配置。<br>
+        再也不怕"数据库断电数据丢了"的问题了。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再玩一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="../../game-utils.js"></script>
+<script>
+const G_TOTAL = 4;
+function startGame() { showScreen('level-1'); TopbarProgress.update({activeIndex:0}); initL2(); initL3(); }
+function completeLevel(n) {
+  TopbarProgress.update({doneUpTo:n,activeIndex:n<G_TOTAL?n:-1});
+  if(n<G_TOTAL) showScreen('level-'+(n+1));
+  else { TopbarProgress.completeAll(); showScreen('complete'); }
+}
+function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+function showFb(prefix,ok,vOk,vBad,exOk,exBad){
+  const fb=document.getElementById(prefix+'-fb');
+  fb.className='feedback-card '+(ok?'correct':'wrong');
+  document.getElementById(prefix+'-vd').textContent=ok?vOk:vBad;
+  document.getElementById(prefix+'-ex').innerHTML=ok?exOk:exBad;
+  const sub=document.getElementById(prefix+'-submit');
+  if(sub) sub.style.display='none';
+  fb.style.display='block';
+}
+
+const PICKS={};
+function pickOpt(lvl,v,el){
+  PICKS[lvl]=v;
+  el.closest('.opt-col').querySelectorAll('.opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l'+lvl+'-submit').style.display='block';
+}
+
+/* ── 关1 ── */
+function submitL1(){
+  const ok=PICKS['1']==='b';
+  document.querySelectorAll('#l1-opts .opt-btn').forEach(b=>{
+    const v=b.onclick.toString().match(/pickOpt\('[^']+','([^']+)'/)?.[1];
+    if(v==='b') b.classList.add('ok');
+    else if(v===PICKS['1']&&!ok) b.classList.add('bad');
+  });
+  showFb('l1',ok,'✓ 顺序正确！','✗ 顺序有误',
+    '两阶段提交流程：<br>① <strong>redo log prepare</strong>（写入 redo log，标记为 prepare）<br>② <strong>binlog fsync</strong>（binlog 写入并刷盘）<br>③ <strong>redo log commit</strong>（redo log 标记为 commit，事务完成）<br>数据页由 InnoDB 后台异步刷盘（脏页机制），不阻塞事务提交。',
+    '正确顺序 B：redo log prepare → binlog → redo log commit → 数据页后台刷盘。这个顺序保证 redo log 和 binlog 的一致性。');
+}
+
+/* ── 关2 ── */
+const L2_CASES = [
+  {crash:'A（redo log prepare 之后，binlog 之前）',opts:['事务回滚，数据丢失（正确）','事务提交，数据保留','随机结果'],ans:0,explain:'崩溃点 A：redo log 是 prepare 状态，没有 binlog → 恢复时 MySQL 判断该事务没有 binlog → <strong>回滚</strong>，数据丢失（符合预期，事务未完成）。'},
+  {crash:'B（binlog 之后，redo log commit 之前）',opts:['事务回滚，数据丢失','事务提交，数据保留（正确）','随机结果'],ans:1,explain:'崩溃点 B：redo log prepare + binlog 都存在 → 恢复时 MySQL 判断该事务有 binlog → <strong>提交</strong>，数据保留。这正是两阶段提交保证一致性的关键。'},
+  {crash:'C（redo log commit 之后）',opts:['事务回滚','事务提交，数据保留（正确）','需要人工介入'],ans:1,explain:'崩溃点 C：事务已完全提交（redo log commit），重启后直接<strong>重放 redo log</strong> 恢复，数据保留。'},
+];
+const L2_STATE={};
+
+function initL2(){
+  L2_CASES.forEach((_,i)=>L2_STATE[i]=null);
+  document.getElementById('l2-cases').innerHTML=L2_CASES.map((c,i)=>`
+    <div class="card" style="margin:0 0 10px;" id="l2c-${i}">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">崩溃点 <strong style="color:var(--accent);">${c.crash}</strong>，事务结果是？</p>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${c.opts.map((o,j)=>`<button class="opt-btn" style="font-size:12px;" onclick="pickL2(${i},${j},this)">${o}</button>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function pickL2(ci,j,el){
+  L2_STATE[ci]=j;
+  el.closest('div').querySelectorAll('.opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  if(L2_CASES.every((_,i)=>L2_STATE[i]!==null)) document.getElementById('l2-submit').style.display='block';
+}
+
+function submitL2(){
+  let wrong=0;
+  L2_CASES.forEach((c,i)=>{
+    const btns=document.getElementById('l2c-'+i).querySelectorAll('.opt-btn');
+    btns.forEach((b,j)=>{
+      if(j===c.ans) b.classList.add('ok');
+      else if(j===L2_STATE[i]&&L2_STATE[i]!==c.ans) b.classList.add('bad');
+    });
+    if(L2_STATE[i]!==c.ans) wrong++;
+  });
+  showFb('l2',wrong===0,'✓ 全部正确！',`✗ 答错 ${wrong} 个`,
+    '两阶段提交的判断规则：<br>• redo log prepare + 没有 binlog → <strong>回滚</strong><br>• redo log prepare + 有 binlog → <strong>提交</strong>（以 binlog 为准）<br>• redo log commit → <strong>直接提交</strong>（重放 redo log）',
+    L2_CASES.filter((_,i)=>L2_STATE[i]!==_.ans).map(c=>c.explain).join('<br>'));
+}
+
+/* ── 关3 ── */
+const L3_STMTS = [
+  {text:'大小固定，写满后循环覆盖（像环形缓冲区）',ans:'redo',explain:'redo log 是循环写的固定大小文件。'},
+  {text:'追加写，不会覆盖历史记录，可以按时间点恢复',ans:'binlog',explain:'binlog 是追加写的，不循环，保存全量历史用于时间点恢复。'},
+  {text:'记录物理变更（某页某偏移写了什么字节）',ans:'redo',explain:'redo log 是物理日志（物理变更），用于 InnoDB 崩溃恢复。'},
+  {text:'可用于主从复制，从节点 replay 此日志追上主节点',ans:'binlog',explain:'binlog 用于主从复制，从节点 IO 线程拉取 binlog，SQL 线程 replay。'},
+];
+const L3_STATE={};
+
+function initL3(){
+  L3_STMTS.forEach((_,i)=>L3_STATE[i]=null);
+  document.getElementById('l3-cases').innerHTML=L3_STMTS.map((s,i)=>`
+    <div class="card" style="margin:0 0 10px;" id="l3c-${i}">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">「${s.text}」属于：</p>
+      <div style="display:flex;gap:8px;">
+        <button class="opt-btn" style="flex:1;text-align:center;" onclick="pickL3(${i},'redo',this)">redo log</button>
+        <button class="opt-btn" style="flex:1;text-align:center;" onclick="pickL3(${i},'binlog',this)">binlog</button>
+      </div>
+    </div>`).join('');
+}
+
+function pickL3(ci,v,el){
+  L3_STATE[ci]=v;
+  el.closest('div').querySelectorAll('.opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  if(L3_STMTS.every((_,i)=>L3_STATE[i]!==null)) document.getElementById('l3-submit').style.display='block';
+}
+
+function submitL3(){
+  let wrong=0;
+  L3_STMTS.forEach((s,i)=>{
+    const btns=document.getElementById('l3c-'+i).querySelectorAll('.opt-btn');
+    btns.forEach(b=>{
+      const v=b.onclick.toString().match(/pickL3\(\d+,'([^']+)'/)?.[1];
+      if(v===s.ans) b.classList.add('ok');
+      else if(v===L3_STATE[i]&&L3_STATE[i]!==s.ans) b.classList.add('bad');
+    });
+    if(L3_STATE[i]!==s.ans) wrong++;
+  });
+  showFb('l3',wrong===0,'✓ 全部分类正确！',`✗ 答错 ${wrong} 个`,
+    'redo log：<strong>物理日志</strong>，固定大小循环写，InnoDB 引擎层，用于<strong>崩溃恢复</strong>。<br>binlog：<strong>逻辑日志</strong>，追加写不覆盖，Server 层，用于<strong>主从复制和时间点恢复</strong>。',
+    L3_STMTS.filter((_,i)=>L3_STATE[i]!==_.ans).map(s=>s.explain).join('<br>'));
+}
+
+/* ── 关4 ── */
+const L4P={a:null,b:null};
+function pickL4(part,v,el){
+  L4P[part]=v;
+  el.closest('.opt-col').querySelectorAll('.opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  if(L4P.a&&L4P.b) document.getElementById('l4-submit').style.display='block';
+}
+function submitL4(){
+  const ok=L4P.a==='1'&&L4P.b==='1';
+  ['#l4a-opts','#l4b-opts'].forEach((sel,pi)=>{
+    const correct=pi===0?'1':'1';
+    const picked=pi===0?L4P.a:L4P.b;
+    document.querySelectorAll(sel+' .opt-btn').forEach(b=>{
+      const v=b.onclick.toString().match(/pickL4\('[^']+','([^']+)'/)?.[1];
+      if(v===correct) b.classList.add('ok');
+      else if(v===picked&&picked!==correct) b.classList.add('bad');
+    });
+  });
+  showFb('l4',ok,'✓ 配置正确！','✗ 配置有误',
+    '金融场景"双1配置"：<br><strong>innodb_flush_log_at_trx_commit = 1</strong>：每次提交都 fsync redo log，宕机零丢失。<br><strong>sync_binlog = 1</strong>：每次提交都 fsync binlog，保证 redo log 和 binlog 一致。<br>代价：每次提交多次 fsync，QPS 会降低，但金融场景数据安全优先于性能。',
+    '"双1配置"是金融/支付场景的标准选择。其他配置（0或2）为了性能牺牲了数据安全性，在极端情况下会丢失最近的事务。');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Redis 故障诊断室 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root {
+      --accent:     #f97316;
+      --accent-dim: rgba(249, 115, 22, 0.25);
+    }
+
+    /* ── QPS 图表 ── */
+    .qps-chart {
+      background: #0a0a14;
+      border: 1px solid #2a2a4a;
+      border-radius: var(--r-md);
+      padding: 16px;
+      position: relative;
+      height: 140px;
+      margin: 10px 0;
+    }
+    .qps-bar-wrap { display: flex; align-items: flex-end; gap: 4px; height: 100%; }
+    .qps-bar {
+      flex: 1;
+      border-radius: 3px 3px 0 0;
+      transition: all 0.3s;
+      min-width: 12px;
+    }
+    .qps-label {
+      position: absolute; bottom: -20px; left: 0; right: 0;
+      display: flex; justify-content: space-between;
+      font-size: 10px; color: var(--text-dim);
+    }
+    .chart-wrap { position: relative; padding-bottom: 24px; }
+
+    /* ── 日志条目 ── */
+    .log-entry {
+      background: #0a0a14;
+      border: 1px solid #2a2a4a;
+      border-radius: var(--r-sm);
+      padding: 10px 14px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      color: #9ca3af;
+      margin: 6px 0;
+      line-height: 1.6;
+    }
+    .log-entry .cmd  { color: #f59e0b; font-weight: 700; }
+    .log-entry .val  { color: #10b981; }
+    .log-entry .warn { color: #ef4444; }
+    .log-entry .key  { color: #a78bfa; }
+
+    /* ── 选项 ── */
+    .diag-opts { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .dopt {
+      padding: 12px 16px; border-radius: var(--r-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      color: var(--text-muted); cursor: pointer; font-size: 13px;
+      text-align: left; transition: all 0.2s;
+    }
+    .dopt:hover { border-color: var(--accent); color: var(--text); }
+    .dopt.sel  { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .dopt.ok   { border-color: var(--success); background: rgba(16,185,129,0.1); color: var(--success); }
+    .dopt.bad  { border-color: var(--danger);  background: rgba(239,68,68,0.1);  color: var(--danger); }
+
+    /* ── 方案卡 ── */
+    .solution-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+    .solution-card {
+      padding: 12px; border-radius: var(--r-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      cursor: pointer; transition: all 0.2s; font-size: 13px;
+    }
+    .solution-card:hover { border-color: var(--accent); }
+    .solution-card.sel  { border-color: var(--accent); background: var(--accent-dim); }
+    .solution-card.ok   { border-color: var(--success); background: rgba(16,185,129,0.1); }
+    .solution-card.bad  { border-color: var(--danger);  background: rgba(239,68,68,0.1); }
+    .sc-title { font-weight: 700; color: var(--text); margin-bottom: 4px; font-size: 13px; }
+    .sc-desc  { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+
+    /* ── 多选 tag 标注 ── */
+    .tag-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .tag-btn {
+      padding: 4px 12px; border-radius: 16px;
+      border: 1.5px solid var(--border); background: var(--surface);
+      color: var(--text-muted); cursor: pointer; font-size: 12px;
+      transition: all 0.2s;
+    }
+    .tag-btn:hover { border-color: var(--accent); color: var(--text); }
+    .tag-btn.sel  { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .tag-btn.ok   { border-color: var(--success); background: rgba(16,185,129,0.1); color: var(--success); }
+    .tag-btn.bad  { border-color: var(--danger);  background: rgba(239,68,68,0.1);  color: var(--danger); }
+
+    .severity {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 700; margin-left: 6px;
+    }
+    .sev-high { background: rgba(239,68,68,0.2); color: #ef4444; }
+    .sev-med  { background: rgba(245,158,11,0.2); color: #f59e0b; }
+    .sev-low  { background: rgba(107,114,128,0.2); color: #9ca3af; }
+
+    /* ── 反馈 ── */
+    .feedback-card {
+      border-radius: var(--r-md); padding: 16px 20px;
+      display: none; animation: fadeIn 0.3s ease;
+    }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+
+    .redis-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 20px;
+      font-size: 12px; font-weight: 700;
+      background: rgba(249,115,22,0.15); border: 1px solid var(--accent);
+      color: var(--accent); margin-bottom: 6px;
+    }
+    .diagnosis-tag {
+      display: inline-block; padding: 3px 10px; border-radius: 4px;
+      font-size: 12px; font-weight: 700;
+      background: rgba(249,115,22,0.1); color: var(--accent);
+      border: 1px solid rgba(249,115,22,0.3); margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">Redis 故障诊断室</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">🏥</span>
+    <h1 class="game-intro__title">Redis 故障诊断室</h1>
+    <p class="game-intro__desc">
+      值班警报响起，Redis 出现了异常！<br>
+      你是首席诊断工程师，根据 QPS 曲线、slowlog 和监控数据，<br>
+      找出病根并开具治疗方案。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 10 分钟</span></div>
+      <div>🎯 <span>5 关</span></div>
+      <div>✦ <span>热key · 大key · 击穿 · slowlog</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">进入诊断室 →</button>
+  </div>
+</div>
+
+
+<!-- 关1：症状识别 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div class="redis-badge">🚨 告警 1 / 5</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">症状识别</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;margin-bottom:10px;">
+        值班监控收到告警，观察下面的 QPS 曲线和慢查询数据，判断故障类型：
+      </p>
+      <!-- QPS 图表 -->
+      <div class="chart-wrap">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">Redis QPS（ops/s）：</div>
+        <div class="qps-chart">
+          <div class="qps-bar-wrap" id="qps1"></div>
+        </div>
+        <div class="qps-label">
+          <span>00:00</span><span>00:10</span><span>00:20</span><span>00:30</span>
+        </div>
+      </div>
+      <div style="margin-top:8px;">
+        <div class="log-entry">
+          <span class="warn">SLOWLOG</span> 检测到高频命令：<br>
+          <span class="cmd">GET</span> <span class="key">user:rank:top100</span> — <span class="val">120,000 calls/min</span><br>
+          延迟: <span class="warn">2ms</span>（正常 0.1ms）
+        </div>
+        <div class="log-entry">
+          CPU 使用率飙升至 <span class="warn">95%</span><br>
+          单个 key 的访问量占总流量的 <span class="warn">73%</span>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">诊断结论：这是哪种故障？</p>
+      <div class="diag-opts" id="l1-opts">
+        <div class="dopt" onclick="pickL('1','a',this)">🔥 热 key（Hot Key）— 单个 key 被频繁访问，集中在某个分片</div>
+        <div class="dopt" onclick="pickL('1','b',this)">📦 大 key（Big Key）— 某个 key 的 value 体积过大，操作耗时高</div>
+        <div class="dopt" onclick="pickL('1','c',this)">💨 缓存穿透 — 大量请求查询不存在的 key，直接打穿到 DB</div>
+        <div class="dopt" onclick="pickL('1','d',this)">❄️ 缓存雪崩 — 大量 key 同时过期，请求集中打到 DB</div>
+      </div>
+      <div id="l1-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitSingle('1','a')">提交诊断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关2：热 key 处理 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div class="redis-badge">💊 治疗方案 2 / 5</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">热 key 处理</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        确认是热 key 后（<code style="color:var(--accent)">user:rank:top100</code> 每分钟 12 万次读取），<br>
+        选择最合适的缓解方案：
+      </p>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">选择最优方案（可以只选一个）：</p>
+      <div class="solution-grid">
+        <div class="solution-card" onclick="pickSol('2','a',this)" id="sol2a">
+          <div class="sc-title">本地缓存（Local Cache）</div>
+          <div class="sc-desc">在应用层加 LRU 缓存，减少对 Redis 的直接请求</div>
+        </div>
+        <div class="solution-card" onclick="pickSol('2','b',this)" id="sol2b">
+          <div class="sc-title">key 分片（Sharding）</div>
+          <div class="sc-desc">将热 key 复制为 user:rank:top100:0~9，随机读取分散压力</div>
+        </div>
+        <div class="solution-card" onclick="pickSol('2','c',this)" id="sol2c">
+          <div class="sc-title">直接删除该 key</div>
+          <div class="sc-desc">删除热 key，让请求全部回源 DB</div>
+        </div>
+        <div class="solution-card" onclick="pickSol('2','d',this)" id="sol2d">
+          <div class="sc-title">扩容 Redis 分片数</div>
+          <div class="sc-desc">增加 Redis 节点，让流量分散到更多节点</div>
+        </div>
+      </div>
+      <div id="l2-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitSingle('2','a')">提交方案</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l2-fb">
+      <div class="feedback-card__verdict" id="l2-vd"></div>
+      <p class="feedback-card__explain" id="l2-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(2)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关3：大 key 处置 -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div class="redis-badge">🚨 告警 3 / 5</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">大 key 处置</h2>
+      <div class="log-entry">
+        <span class="cmd">DEBUG OBJECT</span> <span class="key">user:feed:all</span><br>
+        Type: <span class="val">list</span> | Length: <span class="warn">500,000</span> elements<br>
+        Serialized length: <span class="warn">256 MB</span>
+      </div>
+      <p style="font-size:13px;color:var(--text-muted);margin-top:8px;">
+        发现 500 万元素的超大 List key，需要安全删除。<br>
+        选择正确的删除方式：
+      </p>
+    </div>
+    <div class="card">
+      <div class="diag-opts" id="l3-opts">
+        <div class="dopt" onclick="pickL('3','a',this)"><code>DEL user:feed:all</code> — 同步删除，阻塞 Redis 直到完成</div>
+        <div class="dopt" onclick="pickL('3','b',this)"><code>UNLINK user:feed:all</code> — 异步删除，后台线程处理，不阻塞</div>
+        <div class="dopt" onclick="pickL('3','c',this)">用 LTRIM 分批截断，每次删除 1000 条，逐步清空</div>
+        <div class="dopt" onclick="pickL('3','d',this)">等 key 自然过期，设置 TTL=1s 让它超时删除</div>
+      </div>
+      <p style="font-size:12px;color:var(--text-dim);margin-top:8px;">提示：256MB 的 List，DEL 需要释放每个元素的内存，可能阻塞几十毫秒。</p>
+      <div id="l3-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitSingle('3','b')">提交处置方案</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关4：缓存击穿诊断 -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div class="redis-badge">🚨 告警 4 / 5</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">缓存击穿诊断</h2>
+      <div class="chart-wrap">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">Redis QPS vs DB QPS：</div>
+        <div class="qps-chart">
+          <div class="qps-bar-wrap" id="qps4"></div>
+        </div>
+        <div class="qps-label">
+          <span>12:00</span><span>12:05</span><span>12:10</span><span>12:15</span>
+        </div>
+      </div>
+      <div class="log-entry" style="margin-top:16px;">
+        12:08:31 Redis MISS: <span class="key">product:hot:001</span> <span class="warn">（该 key 刚刚过期）</span><br>
+        12:08:31 DB Query: <span class="warn">8,000 req/s</span>（平时 200 req/s）<br>
+        12:08:32 DB CPU: <span class="warn">99%</span>，大量超时
+      </div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">这是哪种故障？选择根因及处置方案：</p>
+      <p style="font-size:12px;font-weight:700;color:var(--text-dim);margin-bottom:6px;">① 故障类型：</p>
+      <div class="diag-opts" id="l4a-opts">
+        <div class="dopt" onclick="pickL4a('a',this)">缓存穿透 — 大量请求查询永远不存在的 key</div>
+        <div class="dopt" onclick="pickL4a('b',this)">缓存击穿 — 热点 key 过期，大量并发直接打到 DB</div>
+        <div class="dopt" onclick="pickL4a('c',this)">缓存雪崩 — 大量 key 同时过期</div>
+      </div>
+      <p style="font-size:12px;font-weight:700;color:var(--text-dim);margin-top:12px;margin-bottom:6px;">② 最佳处置方案：</p>
+      <div class="diag-opts" id="l4b-opts">
+        <div class="dopt" onclick="pickL4b('a',this)">布隆过滤器（Bloom Filter）拦截不存在的 key</div>
+        <div class="dopt" onclick="pickL4b('b',this)">singleflight 合并并发请求，只让一个请求回源 DB</div>
+        <div class="dopt" onclick="pickL4b('c',this)">为所有 key 设置随机过期时间（TTL 抖动）</div>
+      </div>
+      <div id="l4-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL4()">提交诊断</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(4)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关5：Slow log 根因分析 -->
+<div class="screen" id="screen-level-5">
+  <div class="fade-in" style="width:100%;max-width:600px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div class="redis-badge">🔬 深度分析 5 / 5</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">Slow log 根因分析</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;margin-bottom:10px;">
+        下面是 Redis slowlog 输出的 5 条记录，为每条选择正确的问题类型：
+      </p>
+    </div>
+    <div id="l5-logs"></div>
+    <div id="l5-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL5()">提交分析报告</button>
+    </div>
+    <div class="feedback-card" id="l5-fb">
+      <div class="feedback-card__verdict" id="l5-vd"></div>
+      <p class="feedback-card__explain" id="l5-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(5)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">出院！</div>
+      <p class="complete-screen__desc">
+        Redis 已恢复正常，5 个故障全部诊断成功：<br>
+        热key识别 · 热key处置 · 大key安全删除 ·<br>
+        缓存击穿诊断 · Slowlog 根因分析。<br>
+        这些都是 Redis 面试必考的生产问题。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再次值班</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script src="../../game-utils.js"></script>
+<script>
+const G = { totalLevels: 5 };
+
+function startGame() {
+  showScreen('level-1');
+  TopbarProgress.update({ activeIndex: 0 });
+  initCharts();
+}
+
+function completeLevel(n) {
+  TopbarProgress.update({ doneUpTo: n, activeIndex: n < G.totalLevels ? n : -1 });
+  if (n < G.totalLevels) {
+    showScreen('level-' + (n + 1));
+    if (n + 1 === 5) initL5();
+  } else {
+    TopbarProgress.completeAll();
+    showScreen('complete');
+  }
+}
+
+function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+
+/* ── QPS 图表 ── */
+function initCharts() {
+  // 关1：热key，单个key占比高，QPS 稳定但 CPU 飙升
+  renderBars('qps1', [30,32,31,33,34,70,85,95,92,90,88,87], '#f97316');
+  // 关4：缓存击穿，在某个时间点 DB QPS 突然飙升
+  renderBars('qps4', [
+    20,20,20,20,20,20,20,18,  // Redis MISS 突然
+    85,90,88,86               // DB 压力飙升
+  ], (_, i) => i < 8 ? '#3b82f6' : '#ef4444');
+}
+
+function renderBars(id, data, colorFn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const max = Math.max(...data);
+  el.innerHTML = data.map((v, i) => {
+    const h = Math.round((v / max) * 100);
+    const col = typeof colorFn === 'function' ? colorFn(v, i) : colorFn;
+    return `<div class="qps-bar" style="height:${h}%;background:${col};opacity:0.85;"></div>`;
+  }).join('');
+}
+
+/* ── 通用单选提交 ── */
+const SELECTIONS = {};
+function pickL(lvl, choice, el) {
+  SELECTIONS['l' + lvl] = choice;
+  document.querySelectorAll('#l' + lvl + '-opts .dopt').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l' + lvl + '-submit').style.display = 'block';
+}
+
+function pickSol(lvl, choice, el) {
+  SELECTIONS['l' + lvl] = choice;
+  document.querySelectorAll(`#screen-level-${lvl} .solution-card`).forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l' + lvl + '-submit').style.display = 'block';
+}
+
+function submitSingle(lvl, correct) {
+  const picked = SELECTIONS['l' + lvl];
+  const ok = picked === correct;
+
+  const isSol = document.getElementById(`sol${lvl}a`) !== null;
+  if (isSol) {
+    document.querySelectorAll(`#screen-level-${lvl} .solution-card`).forEach(b => {
+      const key = b.id.replace('sol' + lvl, '');
+      if (key === correct) b.classList.add('ok');
+      else if (key === picked) b.classList.add('bad');
+    });
+  } else {
+    document.querySelectorAll(`#l${lvl}-opts .dopt`).forEach((b, i) => {
+      const opts = ['a','b','c','d'];
+      if (opts[i] === correct) b.classList.add('ok');
+      else if (opts[i] === picked) b.classList.add('bad');
+    });
+  }
+
+  const msgs = {
+    '1': {
+      ok: '✓ 诊断正确！热 key 的特征：单个 key 访问量占比极高（>50%），CPU 飙升，延迟上升但 key 本身大小正常。',
+      bad: '诊断错误。答案是<strong>热 key</strong>：73% 的流量集中在单个 key，这是典型热 key 现象。大 key 是 value 体积大；穿透是请求不存在的 key；雪崩是大量 key 同时过期。'
+    },
+    '2': {
+      ok: '✓ 方案正确！本地缓存（Local Cache）是处理热 key 的首选：每个实例缓存热数据，大幅减少 Redis 请求量。key 分片也有效，但实现复杂。',
+      bad: '最优答案是<strong>本地缓存</strong>：在应用层加 LRU/TTL 缓存，每个服务实例自己缓存热 key，Redis 请求量直降 90%+。删除 key 会让全部流量打到 DB；扩容成本高且热 key 还在同一分片。'
+    },
+    '3': {
+      ok: '✓ 正确！UNLINK 是 Redis 4.0+ 的异步删除命令，立即返回（不阻塞），由后台线程异步释放内存，是生产环境删大 key 的标准做法。',
+      bad: '答案是 <strong>UNLINK</strong>。DEL 是同步删除，256MB 的 List 可能阻塞几十毫秒，影响其他命令。UNLINK 异步执行，立即返回，后台释放内存。'
+    },
+  };
+
+  const msg = msgs[lvl];
+  showFeedback('l' + lvl, ok,
+    msg?.ok || '✓ 正确！', msg?.bad || '✗ 答错了',
+    msg?.ok || '', msg?.bad || '');
+}
+
+function showFeedback(prefix, ok, vOk, vBad, exOk, exBad) {
+  const fb = document.getElementById(prefix + '-fb');
+  fb.className = 'feedback-card ' + (ok ? 'correct' : 'wrong');
+  document.getElementById(prefix + '-vd').textContent = ok ? vOk : vBad;
+  document.getElementById(prefix + '-ex').innerHTML = ok ? exOk : exBad;
+  document.getElementById(prefix + '-submit').style.display = 'none';
+  fb.style.display = 'block';
+}
+
+/* ── 关4：两步诊断 ── */
+const L4 = { type: null, solution: null };
+function pickL4a(v, el) {
+  L4.type = v;
+  document.querySelectorAll('#l4a-opts .dopt').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  checkL4Ready();
+}
+function pickL4b(v, el) {
+  L4.solution = v;
+  document.querySelectorAll('#l4b-opts .dopt').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  checkL4Ready();
+}
+function checkL4Ready() {
+  if (L4.type && L4.solution)
+    document.getElementById('l4-submit').style.display = 'block';
+}
+function submitL4() {
+  const ok = L4.type === 'b' && L4.solution === 'b';
+  // Mark correct answers
+  document.querySelectorAll('#l4a-opts .dopt')[1].classList.add('ok');
+  document.querySelectorAll('#l4b-opts .dopt')[1].classList.add('ok');
+  if (L4.type !== 'b') document.querySelectorAll('#l4a-opts .dopt')[['a','b','c'].indexOf(L4.type)]?.classList.add('bad');
+  if (L4.solution !== 'b') document.querySelectorAll('#l4b-opts .dopt')[['a','b','c'].indexOf(L4.solution)]?.classList.add('bad');
+  showFeedback('l4', ok,
+    '✓ 诊断完美！',
+    '✗ 有误',
+    '正确。热点 key 过期瞬间，大量并发请求同时 cache miss，全部打到 DB，这是<strong>缓存击穿</strong>。singleflight 合并这些并发请求，只让一个请求真正回源 DB，其他请求等待结果复用，直接把 DB 压力降低 99%+。',
+    `<strong>故障类型</strong>：缓存击穿（单个热点 key 过期，大量并发打 DB）<br>
+    <strong>处置方案</strong>：singleflight（也叫 single-flight 或 coalesce）合并并发请求，只有一个回源 DB。<br>
+    布隆过滤器解决的是穿透（不存在的 key）；TTL 抖动解决的是雪崩（大量 key 同时过期）。`
+  );
+}
+
+/* ── 关5：Slowlog 标注 ── */
+const L5_LOGS = [
+  {
+    cmd: 'KEYS *',
+    time: '12ms',
+    severity: 'high',
+    opts: ['O(N)全量扫描', '大key操作', '正常命令', '网络延迟'],
+    ans: 0,
+    explain: 'KEYS * 扫描所有 key，时间复杂度 O(N)，N=key总数。生产环境禁止使用，应改用 SCAN 迭代。'
+  },
+  {
+    cmd: 'HGETALL user:profile:9527',
+    time: '8ms',
+    severity: 'high',
+    opts: ['O(N)全量扫描', '大key操作', '正常命令', '过期扫描'],
+    ans: 1,
+    explain: 'HGETALL 返回 Hash 所有字段，若 Hash 有几十万字段则是大 key 操作。应改用 HGET/HMGET 按需获取。'
+  },
+  {
+    cmd: 'GET product:001',
+    time: '0.1ms',
+    severity: 'low',
+    opts: ['O(N)全量扫描', '大key操作', '正常命令', '内存不足'],
+    ans: 2,
+    explain: 'GET 是 O(1) 操作，0.1ms 是正常延迟，无问题。'
+  },
+  {
+    cmd: 'LRANGE orders:all 0 -1',
+    time: '45ms',
+    severity: 'high',
+    opts: ['O(N)全量扫描', '大key操作', '正常命令', '网络延迟'],
+    ans: 1,
+    explain: 'LRANGE 0 -1 返回 List 所有元素，若 List 有几十万条则是大 key 操作，延迟飙升。应分页或拆分 key。'
+  },
+  {
+    cmd: 'SMEMBERS blacklist:ips',
+    time: '18ms',
+    severity: 'med',
+    opts: ['O(N)全量扫描', '大key操作', '正常命令', 'Set 过大'],
+    ans: 1,
+    explain: 'SMEMBERS 返回 Set 所有元素，若 Set 很大则是大 key 操作。应改用 SSCAN 分批迭代。'
+  },
+];
+const L5_STATE = {};
+
+function initL5() {
+  L5_LOGS.forEach((_, i) => L5_STATE[i] = null);
+  const container = document.getElementById('l5-logs');
+  const sevMap = { high: 'sev-high 严重', med: 'sev-med 中等', low: 'sev-low 正常' };
+  container.innerHTML = L5_LOGS.map((log, i) => `
+    <div class="card" style="margin:0;" id="sl-${i}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <span style="font-size:12px;color:var(--text-dim);">#${i+1}</span>
+        <span class="severity ${log.severity === 'high' ? 'sev-high' : log.severity === 'med' ? 'sev-med' : 'sev-low'}">
+          ${log.severity === 'high' ? '严重' : log.severity === 'med' ? '中等' : '正常'}
+        </span>
+        <span style="font-size:12px;color:var(--text-dim);">耗时 ${log.time}</span>
+      </div>
+      <div class="log-entry" style="margin-bottom:8px;">
+        <span class="cmd">${log.cmd}</span>
+      </div>
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">问题类型：</p>
+      <div class="tag-row">
+        ${log.opts.map((o, j) =>
+          `<button class="tag-btn" onclick="pickL5(${i},${j},this)">${o}</button>`
+        ).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function pickL5(li, choice, el) {
+  L5_STATE[li] = choice;
+  const card = document.getElementById('sl-' + li);
+  card.querySelectorAll('.tag-btn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  const allDone = L5_LOGS.every((_, i) => L5_STATE[i] !== null);
+  document.getElementById('l5-submit').style.display = allDone ? 'block' : 'none';
+}
+
+function submitL5() {
+  let wrong = 0;
+  L5_LOGS.forEach((log, i) => {
+    const card = document.getElementById('sl-' + i);
+    const btns = card.querySelectorAll('.tag-btn');
+    if (L5_STATE[i] === log.ans) card.style.outline = '2px solid #10b981';
+    else { card.style.outline = '2px solid #ef4444'; wrong++; }
+    btns[log.ans].classList.add('ok');
+    if (L5_STATE[i] !== log.ans) btns[L5_STATE[i]].classList.add('bad');
+  });
+  const ok = wrong === 0;
+  showFeedback('l5', ok,
+    ok ? '✓ 全部正确！' : `✗ 答错了 ${wrong} 条`,
+    ok ? '你已掌握 Redis Slowlog 根因分析的核心方法。记住：KEYS *、LRANGE/SMEMBERS/HGETALL 全量命令是最常见的慢命令来源。'
+       : `<strong>修复指南：</strong><br>
+       KEYS * → SCAN（分批迭代）<br>
+       HGETALL/LRANGE/SMEMBERS 全量 → 分页获取或拆分大 key<br>
+       单次 GET 0.1ms 是正常的，不需要优化`
+  );
+}
+</script>
+</body>
+</html>

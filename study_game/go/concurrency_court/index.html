@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>并发 Bug 代码审判 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root {
+      --accent:     #ef4444;
+      --accent-dim: rgba(239, 68, 68, 0.25);
+    }
+    .code-block {
+      background: #0a0a14;
+      border: 1px solid #2a2a4a;
+      border-radius: var(--r-sm);
+      padding: 14px 18px;
+      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #c8c8d4;
+      margin: 10px 0;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .code-block .ck  { color: #60a5fa; }
+    .code-block .cf  { color: #a78bfa; }
+    .code-block .cs  { color: #10b981; }
+    .code-block .cc  { color: #4b5563; font-style: italic; }
+    .code-block .cx  { color: #f59e0b; }
+    .code-block .chl { background: rgba(239,68,68,0.15); border-left: 3px solid #ef4444; margin-left: -3px; padding-left: 3px; }
+
+    .verdict-opts { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+    .vbtn {
+      padding: 8px 18px; border-radius: var(--r-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      color: var(--text-muted); cursor: pointer; font-size: 14px;
+      transition: all 0.2s;
+    }
+    .vbtn:hover { border-color: var(--accent); color: var(--text); }
+    .vbtn.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); font-weight: 600; }
+    .vbtn.ok  { border-color: var(--success); background: rgba(16,185,129,0.1); color: var(--success); }
+    .vbtn.bad { border-color: var(--danger);  background: rgba(239,68,68,0.1);  color: var(--danger); }
+
+    .reason-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+    .rbtn {
+      padding: 10px 14px; border-radius: var(--r-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      color: var(--text-muted); cursor: pointer; font-size: 13px;
+      text-align: left; transition: all 0.2s;
+    }
+    .rbtn:hover { border-color: var(--accent); color: var(--text); }
+    .rbtn.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .rbtn.ok  { border-color: var(--success); background: rgba(16,185,129,0.1); color: var(--success); }
+    .rbtn.bad { border-color: var(--danger);  background: rgba(239,68,68,0.1);  color: var(--danger); }
+
+    .multi-case { margin: 10px 0; }
+    .case-header { font-size: 12px; font-weight: 700; color: var(--text-dim); margin-bottom: 6px; letter-spacing: 0.5px; }
+
+    .judge-word {
+      background: linear-gradient(135deg, rgba(239,68,68,0.1), rgba(239,68,68,0.05));
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: var(--r-md);
+      padding: 14px 18px;
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.7;
+      margin-top: 12px;
+    }
+    .judge-word strong { color: #ef4444; }
+
+    .drag-list { display: flex; flex-direction: column; gap: 6px; }
+    .drag-item {
+      padding: 10px 14px; background: var(--surface);
+      border: 1.5px solid var(--border); border-radius: var(--r-sm);
+      font-size: 13px; color: var(--text-muted);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .drag-idx {
+      width: 24px; height: 24px; border-radius: 50%;
+      background: var(--border); color: var(--text-dim);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; flex-shrink: 0;
+    }
+    .order-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .obtn {
+      padding: 6px 14px; border-radius: var(--r-sm);
+      border: 1.5px solid var(--border); background: var(--surface);
+      color: var(--text-muted); cursor: pointer; font-size: 13px;
+      transition: all 0.2s;
+    }
+    .obtn:hover { border-color: var(--accent); color: var(--text); }
+    .obtn.sel  { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .obtn.ok   { border-color: var(--success); background: rgba(16,185,129,0.1); color: var(--success); }
+    .obtn.bad  { border-color: var(--danger);  background: rgba(239,68,68,0.1);  color: var(--danger); }
+
+    .feedback-card {
+      border-radius: var(--r-md); padding: 16px 20px;
+      display: none; animation: fadeIn 0.3s ease;
+    }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+  </style>
+</head>
+<body>
+
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">并发 Bug 代码审判</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">⚖️</span>
+    <h1 class="game-intro__title">并发 Bug 代码审判</h1>
+    <p class="game-intro__desc">
+      你是首席并发裁判官。每关展示一段 Go 并发代码，<br>
+      判断它会死锁、panic、数据竞争还是正常运行，并说明理由。<br>
+      每次提交后，裁判词会解释真正的原因。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 12 分钟</span></div>
+      <div>🎯 <span>6 关</span></div>
+      <div>✦ <span>Mutex · Channel · defer · select</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开庭 →</button>
+  </div>
+</div>
+
+
+<!-- 关1：Mutex 死锁 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 1 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">Mutex 死锁</h2>
+      <div class="code-block"><span class="ck">var</span> mu sync.Mutex
+
+<span class="ck">func</span> <span class="cf">transfer</span>() {
+    mu.<span class="cf">Lock</span>()
+    <span class="cc">// 处理业务逻辑...</span>
+    mu.<span class="cf">Lock</span>()  <span class="cc">// ← 注意这里</span>
+    <span class="cc">// 更多操作...</span>
+    mu.<span class="cf">Unlock</span>()
+    mu.<span class="cf">Unlock</span>()
+}</div>
+      <p style="font-size:13px;color:var(--text-muted);">调用 <code style="color:var(--accent)">transfer()</code> 后会发生什么？</p>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">你的裁决：</p>
+      <div class="verdict-opts">
+        <button class="vbtn" onclick="pick1('panic',this)">🔥 panic</button>
+        <button class="vbtn" onclick="pick1('deadlock',this)">🔒 死锁</button>
+        <button class="vbtn" onclick="pick1('race',this)">⚡ 数据竞争</button>
+        <button class="vbtn" onclick="pick1('ok',this)">✅ 正常运行</button>
+      </div>
+      <div id="l1-reasons" style="display:none;">
+        <p style="font-size:13px;color:var(--text-muted);margin-top:12px;margin-bottom:8px;">理由：</p>
+        <div class="reason-list">
+          <button class="rbtn" onclick="pickR1('a',this)">A. sync.Mutex 不支持重入，同一 goroutine 第二次 Lock 会永久阻塞</button>
+          <button class="rbtn" onclick="pickR1('b',this)">B. 两次 Unlock 会触发 panic: unlock of unlocked mutex</button>
+          <button class="rbtn" onclick="pickR1('c',this)">C. Mutex 是可重入锁，可以多次 Lock</button>
+          <button class="rbtn" onclick="pickR1('d',this)">D. 第二次 Lock 会自动等待直到第一次 Unlock</button>
+        </div>
+      </div>
+      <div id="l1-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL1()">提交判决</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div class="judge-word">⚖️ <strong>裁判词：</strong>Go 的 sync.Mutex <strong>不可重入</strong>（non-reentrant）。同一 goroutine 已持有锁时再次 Lock，会永久阻塞，形成单 goroutine 自我死锁。Go 运行时检测到无法推进后，抛出 "all goroutines are asleep - deadlock!"。</div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关2：RWMutex 升级陷阱 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 2 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">RWMutex 升级陷阱</h2>
+      <div class="code-block"><span class="ck">var</span> rw sync.RWMutex
+
+<span class="ck">func</span> <span class="cf">readThenWrite</span>() {
+    rw.<span class="cf">RLock</span>()
+    <span class="cc">// 读操作...</span>
+    <span class="chl">    rw.<span class="cf">Lock</span>()  <span class="cc">// 在 RLock 内部升级为写锁</span></span>
+    <span class="cc">// 写操作...</span>
+    rw.<span class="cf">Unlock</span>()
+    rw.<span class="cf">RUnlock</span>()
+}</div>
+      <p style="font-size:13px;color:var(--text-muted);">这段代码会怎样？</p>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">你的裁决：</p>
+      <div class="verdict-opts">
+        <button class="vbtn" onclick="pick2('panic',this)">🔥 panic</button>
+        <button class="vbtn" onclick="pick2('deadlock',this)">🔒 死锁</button>
+        <button class="vbtn" onclick="pick2('race',this)">⚡ 数据竞争</button>
+        <button class="vbtn" onclick="pick2('ok',this)">✅ 正常运行</button>
+      </div>
+      <div id="l2-reasons" style="display:none;">
+        <p style="font-size:13px;color:var(--text-muted);margin-top:12px;margin-bottom:8px;">修复方案（选正确的）：</p>
+        <div class="reason-list">
+          <button class="rbtn" onclick="pickR2('a',this)">A. 先 RUnlock 再 Lock（读完先释放锁再升级）</button>
+          <button class="rbtn" onclick="pickR2('b',this)">B. 使用 sync.Mutex 替代 RWMutex</button>
+          <button class="rbtn" onclick="pickR2('c',this)">C. 改用 rw.TryLock() 尝试升级</button>
+          <button class="rbtn" onclick="pickR2('d',this)">D. 直接在读锁内调用 Lock，等待其他 reader 退出</button>
+        </div>
+      </div>
+      <div id="l2-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL2()">提交判决</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l2-fb">
+      <div class="feedback-card__verdict" id="l2-vd"></div>
+      <p class="feedback-card__explain" id="l2-ex"></p>
+      <div class="judge-word">⚖️ <strong>裁判词：</strong>RLock 内升级 Lock 必然死锁。Lock() 需要等所有读者退出，但当前 goroutine 自己就持着读锁不退出，形成自我等待环。正确做法：<strong>先 RUnlock，再 Lock</strong>（但要注意此窗口期数据可能被其他 writer 修改）。</div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(2)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关3：WaitGroup 误用 -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 3 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">WaitGroup 误用</h2>
+      <div class="code-block"><span class="ck">var</span> wg sync.WaitGroup
+
+<span class="ck">func</span> <span class="cf">main</span>() {
+    <span class="ck">for</span> i := <span class="cs">0</span>; i &lt; <span class="cs">3</span>; i++ {
+        <span class="ck">go</span> <span class="ck">func</span>() {
+<span class="chl">            wg.<span class="cf">Add</span>(<span class="cs">1</span>)  <span class="cc">// ← Add 在 goroutine 内部</span></span>
+            <span class="ck">defer</span> wg.<span class="cf">Done</span>()
+            <span class="cc">// 业务逻辑...</span>
+        }()
+    }
+    wg.<span class="cf">Wait</span>()
+    fmt.<span class="cf">Println</span>(<span class="cs">"all done"</span>)
+}</div>
+      <p style="font-size:13px;color:var(--text-muted);">这段代码可能出现什么问题？</p>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">你的裁决：</p>
+      <div class="verdict-opts">
+        <button class="vbtn" onclick="pick3('panic',this)">🔥 panic: 负数计数</button>
+        <button class="vbtn" onclick="pick3('early',this)">⏭ Wait 提前返回（结果丢失）</button>
+        <button class="vbtn" onclick="pick3('deadlock',this)">🔒 死锁</button>
+        <button class="vbtn" onclick="pick3('ok',this)">✅ 正常运行</button>
+      </div>
+      <div id="l3-reasons" style="display:none;">
+        <p style="font-size:13px;color:var(--text-muted);margin-top:12px;margin-bottom:8px;">根本原因：</p>
+        <div class="reason-list">
+          <button class="rbtn" onclick="pickR3('a',this)">A. Add(1) 在 goroutine 内，可能在 Wait() 之后才执行，导致 Wait 提前退出</button>
+          <button class="rbtn" onclick="pickR3('b',this)">B. Add(1) 在 goroutine 内会触发 data race</button>
+          <button class="rbtn" onclick="pickR3('c',this)">C. Done() 比 Add(1) 先执行，导致 panic: negative WaitGroup counter</button>
+          <button class="rbtn" onclick="pickR3('d',this)">D. for 循环和 goroutine 共享 i 变量导致问题</button>
+        </div>
+      </div>
+      <div id="l3-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL3()">提交判决</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div class="judge-word">⚖️ <strong>裁判词：</strong>wg.Add(1) 必须在 goroutine <strong>启动之前</strong>调用。goroutine 启动是异步的，scheduler 可能让 Wait() 先执行——此时计数为 0，Wait 直接返回，goroutine 后续调用 Done() 则引发 <code>panic: sync: negative WaitGroup counter</code>。</div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关4：Channel 关闭陷阱 -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:600px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 4 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">Channel 关闭陷阱</h2>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">4 段代码，判断各自的行为：</p>
+    </div>
+    <div id="l4-cases"></div>
+    <div id="l4-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL4()">提交判决</button>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div class="judge-word">⚖️ <strong>裁判词（Channel 使用铁律）：</strong><br>
+        1. 向<strong>已关闭的 channel 写入</strong> → panic<br>
+        2. 读<strong>已关闭的 channel</strong> → 立即返回零值 + ok=false，不阻塞<br>
+        3. 读写 <strong>nil channel</strong> → 永久阻塞<br>
+        4. 关闭<strong>已关闭的 channel</strong> → panic<br>
+        记忆口诀：<strong>写/关 nil channel 阻塞，关/写 closed channel panic，读 closed 返回零值</strong>。
+      </div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(4)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关5：defer 顺序 -->
+<div class="screen" id="screen-level-5">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 5 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">defer 顺序</h2>
+      <div class="code-block"><span class="ck">func</span> <span class="cf">run</span>() {
+    <span class="ck">defer</span> fmt.<span class="cf">Println</span>(<span class="cs">"defer-1"</span>)
+    <span class="ck">defer</span> fmt.<span class="cf">Println</span>(<span class="cs">"defer-2"</span>)
+    <span class="ck">defer</span> <span class="ck">func</span>() {
+        <span class="ck">if</span> r := recover(); r != <span class="ck">nil</span> {
+            fmt.<span class="cf">Println</span>(<span class="cs">"recovered:"</span>, r)
+        }
+    }()
+    panic(<span class="cs">"oops"</span>)
+}
+
+<span class="ck">func</span> <span class="cf">main</span>() {
+    <span class="cf">run</span>()
+    fmt.<span class="cf">Println</span>(<span class="cs">"after run"</span>)
+}</div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;"><strong>步骤一：</strong>这段代码会 panic 崩溃吗？</p>
+      <div class="verdict-opts">
+        <button class="vbtn" onclick="pick5a('yes',this)">💥 会崩溃（未恢复的 panic）</button>
+        <button class="vbtn" onclick="pick5a('no',this)">✅ 不会崩溃（recover 有效）</button>
+      </div>
+      <div id="l5-step2" style="display:none;margin-top:14px;">
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;"><strong>步骤二：</strong>选择正确的输出顺序：</p>
+        <div class="order-btns" id="l5-orders"></div>
+      </div>
+      <div id="l5-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL5()">提交判决</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l5-fb">
+      <div class="feedback-card__verdict" id="l5-vd"></div>
+      <p class="feedback-card__explain" id="l5-ex"></p>
+      <div class="judge-word">⚖️ <strong>裁判词：</strong>defer 以 <strong>LIFO</strong> 顺序执行（后注册先执行）。panic 发生后，会沿调用栈展开并依次执行各 defer。recover() 必须在 defer 直接调用的函数内才有效，它拦截 panic 后，后续 defer 继续正常执行。<code>"after run"</code> 会打印，因为 run() 的 panic 被 recover 了。</div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(5)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 关6：select 盲点 -->
+<div class="screen" id="screen-level-6">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 6 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:6px;">select 盲点</h2>
+      <div class="code-block"><span class="ck">var</span> ch1 <span class="ck">chan</span> <span class="ck">int</span>  <span class="cc">// nil channel</span>
+ch2 := make(<span class="ck">chan</span> <span class="ck">int</span>, <span class="cs">1</span>)
+ch2 &lt;- <span class="cs">42</span>
+
+<span class="ck">select</span> {
+<span class="chl"><span class="ck">case</span> v := &lt;-ch1:</span>
+    fmt.<span class="cf">Println</span>(<span class="cs">"ch1:"</span>, v)
+<span class="ck">case</span> v := &lt;-ch2:
+    fmt.<span class="cf">Println</span>(<span class="cs">"ch2:"</span>, v)
+}</div>
+      <p style="font-size:13px;color:var(--text-muted);">这段代码会输出什么？</p>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;">你的裁决：</p>
+      <div class="verdict-opts" id="l6-opts">
+        <button class="vbtn" onclick="pick6('block',this)">🔒 永久阻塞（nil channel）</button>
+        <button class="vbtn" onclick="pick6('ch2',this)">✅ 输出 ch2: 42</button>
+        <button class="vbtn" onclick="pick6('random',this)">🎲 随机选 ch1 或 ch2</button>
+        <button class="vbtn" onclick="pick6('panic',this)">🔥 panic（nil channel）</button>
+      </div>
+      <div id="l6-reasons" style="display:none;">
+        <p style="font-size:13px;color:var(--text-muted);margin-top:12px;margin-bottom:8px;">追加问题：如果两个 case 都 ready，select 如何选择？</p>
+        <div class="reason-list">
+          <button class="rbtn" onclick="pickR6('a',this)">A. 按代码顺序，优先第一个 case</button>
+          <button class="rbtn" onclick="pickR6('b',this)">B. 随机选择一个 ready 的 case</button>
+          <button class="rbtn" onclick="pickR6('c',this)">C. 总是选最后一个 case</button>
+          <button class="rbtn" onclick="pickR6('d',this)">D. 编译报错，不允许多个 case 同时 ready</button>
+        </div>
+      </div>
+      <div id="l6-submit" style="text-align:center;display:none;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL6()">提交判决</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l6-fb">
+      <div class="feedback-card__verdict" id="l6-vd"></div>
+      <p class="feedback-card__explain" id="l6-ex"></p>
+      <div class="judge-word">⚖️ <strong>裁判词：</strong>select 中的 <strong>nil channel 永远不会就绪</strong>，等价于该 case 不存在。因此只有 ch2 就绪，输出 42。若多个 case 同时就绪，Go 运行时<strong>随机选一个</strong>，防止饥饿（这是语言规范保证的，不是实现细节）。这种随机性是 Go 的刻意设计。</div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(6)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">通关！</div>
+      <p class="complete-screen__desc">
+        你已审判了 6 个 Go 并发经典陷阱：<br>
+        Mutex 重入 · RWMutex 升级 · WaitGroup Add 时机 ·<br>
+        Channel 关闭规则 · defer LIFO + recover · select nil channel。<br>
+        这些都是面试高频考点，现在你掌握了它们。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再玩一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script src="../../game-utils.js"></script>
+<script>
+const G = { totalLevels: 6 };
+
+function startGame() {
+  showScreen('level-1');
+  TopbarProgress.update({ activeIndex: 0 });
+}
+
+function completeLevel(n) {
+  TopbarProgress.update({ doneUpTo: n, activeIndex: n < G.totalLevels ? n : -1 });
+  if (n < G.totalLevels) {
+    showScreen('level-' + (n + 1));
+    if (n + 1 === 4) initL4();
+    if (n + 1 === 5) initL5();
+  } else {
+    TopbarProgress.completeAll();
+    showScreen('complete');
+  }
+}
+
+function resetGame() {
+  TopbarProgress.reset();
+  showScreen('intro');
+}
+
+function showFeedback(prefix, correct, verdict, explain) {
+  const fb = document.getElementById(prefix + '-fb');
+  fb.className = 'feedback-card ' + (correct ? 'correct' : 'wrong');
+  document.getElementById(prefix + '-vd').textContent = verdict;
+  document.getElementById(prefix + '-ex').innerHTML = explain;
+  document.getElementById(prefix + '-submit').style.display = 'none';
+  fb.style.display = 'block';
+}
+
+/* ── 关1 ── */
+let L1 = { verdict: null, reason: null };
+function pick1(v, el) {
+  L1.verdict = v; L1.reason = null;
+  document.querySelectorAll('#screen-level-1 .vbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l1-reasons').style.display = 'block';
+  document.getElementById('l1-submit').style.display = 'none';
+}
+function pickR1(r, el) {
+  L1.reason = r;
+  document.querySelectorAll('#screen-level-1 .rbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l1-submit').style.display = 'block';
+}
+function submitL1() {
+  const ok = L1.verdict === 'deadlock' && L1.reason === 'a';
+  markChoice('#screen-level-1 .vbtn', L1.verdict, 'deadlock');
+  markChoice('#screen-level-1 .rbtn', L1.reason, 'a');
+  showFeedback('l1', ok, ok ? '✓ 裁决正确！' : '✗ 裁决有误',
+    ok ? 'sync.Mutex 非重入锁，同一 goroutine 两次 Lock 必然死锁。Go 运行时会抛出 fatal error: all goroutines are asleep - deadlock!'
+       : '答案是：<strong>死锁</strong>。原因 A：Go sync.Mutex 不可重入，同一 goroutine 持锁后再次 Lock 会永久阻塞。');
+}
+
+/* ── 关2 ── */
+let L2 = { verdict: null, reason: null };
+function pick2(v, el) {
+  L2.verdict = v; L2.reason = null;
+  document.querySelectorAll('#screen-level-2 .vbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l2-reasons').style.display = 'block';
+  document.getElementById('l2-submit').style.display = 'none';
+}
+function pickR2(r, el) {
+  L2.reason = r;
+  document.querySelectorAll('#screen-level-2 .rbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l2-submit').style.display = 'block';
+}
+function submitL2() {
+  const ok = L2.verdict === 'deadlock' && L2.reason === 'a';
+  markChoice('#screen-level-2 .vbtn', L2.verdict, 'deadlock');
+  markChoice('#screen-level-2 .rbtn', L2.reason, 'a');
+  showFeedback('l2', ok, ok ? '✓ 裁决正确！' : '✗ 裁决有误',
+    ok ? 'RLock 内升级 Lock 必定死锁。正确做法：先 RUnlock 再 Lock，但需注意窗口期数据可能变化。'
+       : '答案：<strong>死锁</strong>。修复：<strong>先 RUnlock 再 Lock</strong>（A 选项）。读锁升级写锁是经典并发 Bug，没有原子的"锁升级"原语。');
+}
+
+/* ── 关3 ── */
+let L3 = { verdict: null, reason: null };
+function pick3(v, el) {
+  L3.verdict = v; L3.reason = null;
+  document.querySelectorAll('#screen-level-3 .vbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l3-reasons').style.display = 'block';
+  document.getElementById('l3-submit').style.display = 'none';
+}
+function pickR3(r, el) {
+  L3.reason = r;
+  document.querySelectorAll('#screen-level-3 .rbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l3-submit').style.display = 'block';
+}
+function submitL3() {
+  const okV = L3.verdict === 'early' || L3.verdict === 'panic';
+  const okR = L3.reason === 'a';
+  const ok = okV && okR;
+  showFeedback('l3', ok, ok ? '✓ 裁决正确！' : '✗ 裁决有误',
+    '答案：可能<strong>提前退出</strong>（Wait 在 Add 前执行），也可能 <strong>panic</strong>（负数计数）。根本原因 A：wg.Add(1) 必须在 <code>go</code> 关键字之前调用，否则调度顺序无法保证。');
+}
+
+/* ── 关4：Channel 关闭陷阱 ── */
+const L4_CASES = [
+  {
+    label: '情况 1',
+    code: `ch := make(chan int, 1)\nclose(ch)\nch <- 42  // ?`,
+    opts: ['panic','阻塞','返回零值','正常写入'],
+    ans: 0,
+    explain: '向已关闭的 channel 写入 → <strong>立即 panic</strong>: send on closed channel'
+  },
+  {
+    label: '情况 2',
+    code: `ch := make(chan int, 1)\nch <- 42\nclose(ch)\nv, ok := <-ch  // ?`,
+    opts: ['永久阻塞','panic','v=42,ok=true','v=0,ok=false'],
+    ans: 2,
+    explain: '读已关闭但有数据的 channel → 正常读取，<strong>v=42, ok=true</strong>。数据耗尽后再读才返回零值+false。'
+  },
+  {
+    label: '情况 3',
+    code: `var ch chan int  // nil\n<-ch             // ?`,
+    opts: ['panic','立即返回0','永久阻塞','返回nil'],
+    ans: 2,
+    explain: '读 nil channel → <strong>永久阻塞</strong>（不会 panic）。写 nil channel 同样永久阻塞。'
+  },
+  {
+    label: '情况 4',
+    code: `ch := make(chan int)\nclose(ch)\nclose(ch)  // ?`,
+    opts: ['幂等，无事','panic','阻塞','编译错误'],
+    ans: 1,
+    explain: '关闭已关闭的 channel → <strong>立即 panic</strong>: close of closed channel。'
+  },
+];
+const L4_STATE = {};
+
+function initL4() {
+  L4_CASES.forEach((_, i) => L4_STATE[i] = null);
+  document.getElementById('l4-cases').innerHTML = L4_CASES.map((c, i) => `
+    <div class="card multi-case" id="mc4-${i}">
+      <div class="case-header">${c.label}</div>
+      <div class="code-block">${c.code}</div>
+      <div class="verdict-opts">
+        ${c.opts.map((o, j) => `<button class="vbtn" onclick="pickL4(${i},${j},this)">${o}</button>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function pickL4(ci, choice, el) {
+  L4_STATE[ci] = choice;
+  const mc = document.getElementById('mc4-' + ci);
+  mc.querySelectorAll('.vbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  const allDone = L4_CASES.every((_, i) => L4_STATE[i] !== null);
+  document.getElementById('l4-submit').style.display = allDone ? 'block' : 'none';
+}
+
+function submitL4() {
+  let wrong = 0;
+  L4_CASES.forEach((c, i) => {
+    const mc = document.getElementById('mc4-' + i);
+    const btns = mc.querySelectorAll('.vbtn');
+    if (L4_STATE[i] === c.ans) mc.style.borderColor = '#10b981';
+    else { mc.style.borderColor = '#ef4444'; wrong++; }
+    btns[c.ans].classList.add('ok');
+    if (L4_STATE[i] !== c.ans) btns[L4_STATE[i]].classList.add('bad');
+  });
+  const ok = wrong === 0;
+  showFeedback('l4', ok, ok ? '✓ 全部正确！' : `✗ 答错了 ${wrong} 个`,
+    ok ? '你已掌握 Channel 的四种陷阱场景。这是 Go 面试必考内容。'
+       : L4_CASES.filter((c, i) => L4_STATE[i] !== c.ans).map(c => c.explain).join('<br>'));
+}
+
+/* ── 关5：defer 顺序 ── */
+const L5_ORDER_OPTIONS = [
+  { id: 'a', text: 'recovered: oops → defer-2 → defer-1 → after run' },
+  { id: 'b', text: 'defer-1 → defer-2 → recovered: oops → after run' },
+  { id: 'c', text: 'recovered: oops → defer-1 → defer-2' },
+  { id: 'd', text: 'after run → defer-2 → defer-1 (崩溃)' },
+];
+let L5 = { panicChoice: null, orderChoice: null };
+
+function initL5() {
+  L5 = { panicChoice: null, orderChoice: null };
+  document.getElementById('l5-orders').innerHTML = L5_ORDER_OPTIONS.map(o =>
+    `<button class="obtn" onclick="pickL5o('${o.id}',this)">${o.text}</button>`).join('');
+}
+
+function pick5a(v, el) {
+  L5.panicChoice = v;
+  document.querySelectorAll('#screen-level-5 .verdict-opts .vbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  if (v === 'yes') {
+    // wrong answer - still show step 2 for learning
+    document.getElementById('l5-step2').style.display = 'block';
+  } else {
+    document.getElementById('l5-step2').style.display = 'block';
+  }
+}
+
+function pickL5o(id, el) {
+  L5.orderChoice = id;
+  document.querySelectorAll('#l5-orders .obtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l5-submit').style.display = 'block';
+}
+
+function submitL5() {
+  const ok = L5.panicChoice === 'no' && L5.orderChoice === 'a';
+  const orderBtns = document.querySelectorAll('#l5-orders .obtn');
+  orderBtns.forEach(b => { if (b.onclick.toString().includes("'a'")) b.classList.add('ok'); });
+  if (L5.orderChoice !== 'a') orderBtns.forEach(b => { if (b.onclick.toString().includes(`'${L5.orderChoice}'`)) b.classList.add('bad'); });
+  showFeedback('l5', ok, ok ? '✓ 裁决正确！' : '✗ 裁决有误',
+    `答案：<strong>不会崩溃</strong>，输出顺序是 <strong>recovered: oops → defer-2 → defer-1 → after run</strong>。<br>
+    defer 栈：先注册 defer-1，再 defer-2，再 recover。panic 时 LIFO 执行：recover 先运行（拦截 panic），然后 defer-2，最后 defer-1。recover 成功后，run() 正常返回，main 继续执行 "after run"。`);
+}
+
+/* ── 关6 ── */
+let L6 = { verdict: null, reason: null };
+function pick6(v, el) {
+  L6.verdict = v; L6.reason = null;
+  document.querySelectorAll('#l6-opts .vbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l6-reasons').style.display = 'block';
+  document.getElementById('l6-submit').style.display = 'none';
+}
+function pickR6(r, el) {
+  L6.reason = r;
+  document.querySelectorAll('#screen-level-6 .rbtn').forEach(b => b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l6-submit').style.display = 'block';
+}
+function submitL6() {
+  const ok = L6.verdict === 'ch2' && L6.reason === 'b';
+  markChoice('#l6-opts .vbtn', L6.verdict, 'ch2');
+  markChoice('#screen-level-6 .rbtn', L6.reason, 'b');
+  showFeedback('l6', ok, ok ? '✓ 裁决正确！' : '✗ 裁决有误',
+    ok ? 'nil channel 在 select 中永远阻塞，等价于该 case 不存在。多个 case 同时 ready 时，Go 随机选择（语言规范保证），防止某个 case 被饿死。'
+       : '答案：<strong>输出 ch2: 42</strong>（nil channel 永不就绪）。追加问题：多个 case ready 时，Go <strong>随机选</strong>（选项 B）。');
+}
+
+/* ── 公共辅助 ── */
+function markChoice(selector, picked, correct) {
+  document.querySelectorAll(selector).forEach(b => {
+    const key = b.onclick?.toString().match(/'([^']+)'/)?.[1];
+    if (key === correct) b.classList.add('ok');
+    else if (key === picked && picked !== correct) b.classList.add('bad');
+  });
+}
+</script>
+</body>
+</html>

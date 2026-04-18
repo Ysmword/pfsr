@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TCP 握手挥手模拟器 - 学习游戏中心</title>
+  <link rel="stylesheet" href="../../shared.css">
+  <style>
+    :root { --accent: #3b82f6; --accent-dim: rgba(59,130,246,0.2); }
+
+    /* ── 报文发送 ── */
+    .tcp-scene { display: flex; align-items: flex-start; gap: 20px; margin: 12px 0; flex-wrap: wrap; }
+    .tcp-side {
+      flex: 1; min-width: 120px; background: var(--surface-alt);
+      border: 2px solid var(--border); border-radius: var(--r-md);
+      padding: 14px 12px; text-align: center;
+    }
+    .tcp-side.client { border-color: #3b82f6; }
+    .tcp-side.server { border-color: #10b981; }
+    .tcp-side.client .side-icon { color: #3b82f6; }
+    .tcp-side.server .side-icon { color: #10b981; }
+    .side-icon { font-size: 28px; display: block; }
+    .side-name { font-size: 12px; font-weight: 700; margin-top: 4px; }
+    .side-state { font-size: 11px; color: var(--text-dim); margin-top: 4px; min-height: 16px; }
+
+    .tcp-middle { flex: 2; min-width: 160px; }
+    .packet-lane { position: relative; min-height: 40px; margin: 6px 0; }
+    .tcp-packet {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 700;
+      opacity: 0; transition: all 0.5s;
+      border: 1.5px solid;
+    }
+    .tcp-packet.show { opacity: 1; }
+    .tcp-packet.c2s { margin-left: 0; background: rgba(59,130,246,0.15); border-color: #3b82f6; color: #3b82f6; }
+    .tcp-packet.s2c { margin-left: auto; background: rgba(16,185,129,0.15); border-color: #10b981; color: #10b981; }
+    .tcp-packet.both { background: rgba(124,131,255,0.15); border-color: #a78bfa; color: #a78bfa; }
+    .arrow-c2s { font-size: 16px; margin-left: 8px; }
+    .arrow-s2c { font-size: 16px; margin-right: 8px; }
+
+    /* 报文按钮 */
+    .pkt-btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+    .pkt-btn {
+      padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 700;
+      border: 1.5px solid; cursor: pointer; transition: all 0.2s;
+    }
+    .pkt-btn:hover { transform: translateY(-1px); }
+    .pkt-btn.syn  { border-color: #3b82f6; color: #3b82f6; background: rgba(59,130,246,0.08); }
+    .pkt-btn.ack  { border-color: #10b981; color: #10b981; background: rgba(16,185,129,0.08); }
+    .pkt-btn.fin  { border-color: #f59e0b; color: #f59e0b; background: rgba(245,158,11,0.08); }
+    .pkt-btn.synack { border-color: #a78bfa; color: #a78bfa; background: rgba(167,139,250,0.08); }
+    .pkt-btn.rst  { border-color: #ef4444; color: #ef4444; background: rgba(239,68,68,0.08); }
+    .pkt-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+    .pkt-btn.ok   { border-color: #10b981; box-shadow: 0 0 8px rgba(16,185,129,0.4); }
+    .pkt-btn.bad  { border-color: #ef4444; }
+
+    /* 状态标签 */
+    .state-tag {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 700;
+    }
+    .st-listen    { background: rgba(59,130,246,0.2); color: #3b82f6; }
+    .st-synrcvd   { background: rgba(167,139,250,0.2); color: #a78bfa; }
+    .st-synsent   { background: rgba(59,130,246,0.2); color: #60a5fa; }
+    .st-estab     { background: rgba(16,185,129,0.2); color: #10b981; }
+    .st-finwait   { background: rgba(245,158,11,0.2); color: #f59e0b; }
+    .st-closewait { background: rgba(239,68,68,0.2); color: #ef4444; }
+    .st-timewait  { background: rgba(239,68,68,0.3); color: #ef4444; }
+    .st-closed    { background: rgba(75,85,99,0.2); color: #6b7280; }
+
+    /* 状态机表 */
+    .state-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0; }
+    .state-table th { padding: 6px 10px; background: var(--surface-alt); color: var(--accent); border: 1px solid var(--border); }
+    .state-table td { padding: 6px 10px; border: 1px solid var(--border); color: var(--text-muted); }
+    .state-table .hl { background: rgba(59,130,246,0.08); font-weight: 700; color: var(--text); }
+
+    /* 选项 */
+    .opt-col { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .opt-btn { padding: 10px 14px; border-radius: var(--r-sm); border: 1.5px solid var(--border); background: var(--surface); color: var(--text-muted); cursor: pointer; font-size: 13px; text-align: left; transition: all 0.2s; }
+    .opt-btn:hover { border-color: var(--accent); color: var(--text); }
+    .opt-btn.sel { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+    .opt-btn.ok  { border-color: #10b981; background: rgba(16,185,129,0.1); color: #10b981; }
+    .opt-btn.bad { border-color: #ef4444; background: rgba(239,68,68,0.1); color: #ef4444; }
+
+    /* 日志 */
+    .evt-log { font-size: 12px; color: var(--text-dim); min-height: 28px; margin: 6px 0; line-height: 1.7; }
+    .log-ok   { color: #10b981; } .log-warn { color: #f59e0b; }
+    .log-err  { color: #ef4444; } .log-info { color: #3b82f6; }
+
+    .feedback-card { border-radius: var(--r-md); padding: 16px 20px; display: none; animation: fadeIn 0.3s; }
+    .feedback-card.correct { background: rgba(16,185,129,0.1); border: 2px solid #10b981; }
+    .feedback-card.wrong   { background: rgba(239,68,68,0.1);  border: 2px solid #ef4444; }
+    .feedback-card__verdict { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+    .feedback-card.correct .feedback-card__verdict { color: #10b981; }
+    .feedback-card.wrong   .feedback-card__verdict { color: #ef4444; }
+    .feedback-card__explain { font-size: 14px; color: var(--text-muted); line-height: 1.7; margin-bottom: 14px; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; } }
+    .note-box { background: rgba(59,130,246,0.07); border: 1px solid rgba(59,130,246,0.25); border-radius: var(--r-sm); padding: 10px 14px; font-size: 13px; color: var(--text-muted); line-height: 1.7; margin: 8px 0; }
+    .note-box strong { color: var(--accent); }
+  </style>
+</head>
+<body>
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">TCP 握手挥手模拟器</h1>
+  <div class="game-topbar__progress">
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div><div class="game-topbar__dot"></div>
+    <div class="game-topbar__dot"></div>
+  </div>
+</nav>
+
+<!-- Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="game-intro fade-in">
+    <span class="game-intro__icon">🤝</span>
+    <h1 class="game-intro__title">TCP 握手挥手模拟器</h1>
+    <p class="game-intro__desc">
+      你扮演客户端，亲手发出 SYN、ACK、FIN 报文，<br>
+      走完三次握手和四次挥手的每一步，<br>
+      体会每个状态背后的设计原因。
+    </p>
+    <div class="game-intro__meta">
+      <div>⏱ <span>约 10 分钟</span></div>
+      <div>🎯 <span>5 关</span></div>
+      <div>✦ <span>三次握手 · 四次挥手 · TIME_WAIT · 状态机</span></div>
+    </div>
+    <button class="btn btn-primary" onclick="startGame()">开始连接 →</button>
+  </div>
+</div>
+
+<!-- 关1：三次握手 -->
+<div class="screen" id="screen-level-1">
+  <div class="fade-in" style="width:100%;max-width:620px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 1 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">三次握手</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">你是客户端，按正确顺序点击报文按钮完成三次握手：</p>
+      <div class="tcp-scene">
+        <div class="tcp-side client">
+          <span class="side-icon">💻</span>
+          <div class="side-name">客户端（你）</div>
+          <div class="side-state" id="c-state1"><span class="state-tag st-closed">CLOSED</span></div>
+        </div>
+        <div class="tcp-middle" id="lane1">
+          <div style="font-size:11px;color:var(--text-dim);text-align:center;margin-bottom:6px;">报文交换</div>
+        </div>
+        <div class="tcp-side server">
+          <span class="side-icon">🖥</span>
+          <div class="side-name">服务端</div>
+          <div class="side-state" id="s-state1"><span class="state-tag st-listen">LISTEN</span></div>
+        </div>
+      </div>
+      <div class="evt-log" id="l1-log">点击客户端能发的第一个报文...</div>
+    </div>
+    <div class="card">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">可发的报文（按正确顺序点击）：</p>
+      <div class="pkt-btns" id="l1-btns">
+        <button class="pkt-btn syn" id="b1-syn" onclick="sendPkt1('SYN')">SYN</button>
+        <button class="pkt-btn synack" disabled>SYN-ACK（服务端发）</button>
+        <button class="pkt-btn ack" id="b1-ack" disabled onclick="sendPkt1('ACK')">ACK</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l1-fb">
+      <div class="feedback-card__verdict" id="l1-vd"></div>
+      <p class="feedback-card__explain" id="l1-ex"></p>
+      <div class="note-box"><strong>为什么是三次？</strong>两次握手不能确认客户端的接收能力；三次握手同时完成了双向序列号同步（ISN 交换）——服务端的 SYN-ACK 带上自己的 ISN，客户端 ACK 确认，双方序列号对齐后才能传数据。</div>
+      <div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="completeLevel(1)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关2：四次挥手 -->
+<div class="screen" id="screen-level-2">
+  <div class="fade-in" style="width:100%;max-width:620px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 2 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">四次挥手</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">连接已建立，你（客户端）主动发起关闭。按步骤完成四次挥手：</p>
+      <div class="tcp-scene">
+        <div class="tcp-side client">
+          <span class="side-icon">💻</span>
+          <div class="side-name">客户端（你）</div>
+          <div class="side-state" id="c-state2"><span class="state-tag st-estab">ESTABLISHED</span></div>
+        </div>
+        <div class="tcp-middle" id="lane2">
+          <div style="font-size:11px;color:var(--text-dim);text-align:center;margin-bottom:6px;">四次挥手</div>
+        </div>
+        <div class="tcp-side server">
+          <span class="side-icon">🖥</span>
+          <div class="side-name">服务端</div>
+          <div class="side-state" id="s-state2"><span class="state-tag st-estab">ESTABLISHED</span></div>
+        </div>
+      </div>
+      <div class="evt-log" id="l2-log">发送 FIN 开始关闭...</div>
+    </div>
+    <div class="card">
+      <div class="pkt-btns" id="l2-btns">
+        <button class="pkt-btn fin" id="b2-fin1" onclick="sendWave(0)">① 发 FIN（我要关了）</button>
+        <button class="pkt-btn ack" disabled id="b2-ack2">② 等服务端 ACK...</button>
+        <button class="pkt-btn fin" disabled id="b2-fin3">③ 等服务端 FIN...</button>
+        <button class="pkt-btn ack" disabled id="b2-ack4" onclick="sendWave(3)">④ 发 ACK（确认收到）</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l2-fb">
+      <div class="feedback-card__verdict" id="l2-vd"></div>
+      <p class="feedback-card__explain" id="l2-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(2)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关3：TIME_WAIT -->
+<div class="screen" id="screen-level-3">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 3 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">TIME_WAIT 状态</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        客户端发完最后的 ACK 后，进入 <strong style="color:var(--text);">TIME_WAIT</strong> 状态，等待 <strong style="color:var(--text);">2MSL</strong>（约 60~120 秒）才真正关闭。<br>
+        为什么要有 TIME_WAIT？
+      </p>
+    </div>
+    <div class="card">
+      <div class="opt-col" id="l3-opts">
+        <div class="opt-btn" onclick="pickL3('a',this)">A. 等待 2MSL 是为了等最后的 ACK 送达，如果 ACK 丢失服务端会重发 FIN，客户端重新发 ACK</div>
+        <div class="opt-btn" onclick="pickL3('b',this)">B. 防止旧连接的迷途报文在新连接中出现（序号重用问题）</div>
+        <div class="opt-btn" onclick="pickL3('ab',this)">C. A 和 B 都是原因</div>
+        <div class="opt-btn" onclick="pickL3('d',this)">D. TIME_WAIT 是服务端才有的状态，客户端直接 CLOSED</div>
+      </div>
+      <div id="l3-submit" style="text-align:center;display:none;margin-top:10px;">
+        <button class="btn btn-primary" onclick="submitL3()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l3-fb">
+      <div class="feedback-card__verdict" id="l3-vd"></div>
+      <p class="feedback-card__explain" id="l3-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(3)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关4：状态机判断 -->
+<div class="screen" id="screen-level-4">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 4 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">状态机判断</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">判断以下 4 个场景中，客户端或服务端处于什么 TCP 状态：</p>
+    </div>
+    <div id="l4-cases"></div>
+    <div id="l4-submit" style="text-align:center;display:none;">
+      <button class="btn btn-primary" onclick="submitL4()">提交全部</button>
+    </div>
+    <div class="feedback-card" id="l4-fb">
+      <div class="feedback-card__verdict" id="l4-vd"></div>
+      <p class="feedback-card__explain" id="l4-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(4)">继续 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 关5：为什么握手是三次挥手是四次 -->
+<div class="screen" id="screen-level-5">
+  <div class="fade-in" style="width:100%;max-width:580px;display:flex;flex-direction:column;gap:14px;">
+    <div class="card">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">第 5 关</div>
+      <h2 style="font-size:20px;color:var(--accent);margin-bottom:8px;">握手 3 次 vs 挥手 4 次</h2>
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.8;">
+        经典面试题：<strong style="color:var(--text);">为什么建立连接需要 3 次握手，断开连接需要 4 次挥手？</strong><br>
+        以下 4 个选项，选出<strong style="color:var(--text);">所有正确</strong>的解释：
+      </p>
+    </div>
+    <div class="card">
+      <div style="display:flex;flex-direction:column;gap:8px;" id="l5-checks">
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch5-1" style="width:16px;height:16px;accent-color:var(--accent);"> ① 握手：SYN-ACK 合并，服务端把"我收到了"和"我也要连"合成一次，所以 3 次够了
+        </label>
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch5-2" style="width:16px;height:16px;accent-color:var(--accent);"> ② 挥手：TCP 是全双工，两个方向各需要一次 FIN+ACK，不能合并成 SYN-ACK 那样，所以是 4 次
+        </label>
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch5-3" style="width:16px;height:16px;accent-color:var(--accent);"> ③ 挥手：服务端收到 FIN 后，可能还有数据要发，先 ACK 让客户端不要等，等自己发完再 FIN
+        </label>
+        <label style="display:flex;gap:10px;font-size:13px;cursor:pointer;color:var(--text-muted);">
+          <input type="checkbox" id="ch5-4" style="width:16px;height:16px;accent-color:var(--accent);"> ④ 握手必须 3 次，少一次会造成历史连接请求被错误接受（旧 SYN 迟到问题）
+        </label>
+      </div>
+      <div style="text-align:center;margin-top:12px;">
+        <button class="btn btn-primary" onclick="submitL5()">提交</button>
+      </div>
+    </div>
+    <div class="feedback-card" id="l5-fb">
+      <div class="feedback-card__verdict" id="l5-vd"></div>
+      <p class="feedback-card__explain" id="l5-ex"></p>
+      <div style="text-align:center;"><button class="btn btn-primary" onclick="completeLevel(5)">查看通关 →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- 通关 -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-screen__rings">
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+      <div class="complete-screen__ring"></div><div class="complete-screen__ring"></div>
+    </div>
+    <div class="complete-screen__content fade-in-slow">
+      <div class="complete-screen__title">连接完美关闭！</div>
+      <p class="complete-screen__desc">
+        你已走完 TCP 的完整生命周期：<br>
+        三次握手 · 四次挥手 · TIME_WAIT ·<br>
+        状态机 · 设计原因。<br>
+        TCP 面试题，从此游刃有余。
+      </p>
+      <div class="complete-screen__actions">
+        <button class="btn btn-primary" onclick="resetGame()">再玩一次</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="../../game-utils.js"></script>
+<script>
+const G_TOTAL = 5;
+function startGame() { showScreen('level-1'); TopbarProgress.update({activeIndex:0}); initL4(); }
+function completeLevel(n) {
+  TopbarProgress.update({doneUpTo:n,activeIndex:n<G_TOTAL?n:-1});
+  if(n<G_TOTAL) showScreen('level-'+(n+1));
+  else { TopbarProgress.completeAll(); showScreen('complete'); }
+}
+function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+function showFb(prefix, ok, vOk, vBad, exOk, exBad) {
+  const fb=document.getElementById(prefix+'-fb');
+  fb.className='feedback-card '+(ok?'correct':'wrong');
+  document.getElementById(prefix+'-vd').textContent=ok?vOk:vBad;
+  document.getElementById(prefix+'-ex').innerHTML=ok?exOk:exBad;
+  const sub=document.getElementById(prefix+'-submit');
+  if(sub) sub.style.display='none';
+  fb.style.display='block';
+}
+function addPacket(laneId, text, dir) {
+  const lane=document.getElementById(laneId);
+  const div=document.createElement('div');
+  div.className=`packet-lane`;
+  div.style.display='flex';
+  div.style.alignItems='center';
+  const arrow = dir==='c2s' ? '→' : '←';
+  div.innerHTML=`<div class="tcp-packet ${dir} show" style="width:100%;justify-content:center;">${text} ${arrow}</div>`;
+  lane.appendChild(div);
+}
+
+/* ── 关1：三次握手 ── */
+let L1_step=0;
+function sendPkt1(type) {
+  if(type==='SYN' && L1_step===0){
+    addPacket('lane1','SYN','c2s');
+    document.getElementById('c-state1').innerHTML='<span class="state-tag st-synsent">SYN_SENT</span>';
+    document.getElementById('l1-log').innerHTML='<span class="log-info">你 → 服务端：SYN（我想连接，seq=x）</span>';
+    document.getElementById('b1-syn').disabled=true;
+    L1_step=1;
+    setTimeout(()=>{
+      addPacket('lane1','SYN-ACK','s2c');
+      document.getElementById('s-state1').innerHTML='<span class="state-tag st-synrcvd">SYN_RCVD</span>';
+      document.getElementById('l1-log').innerHTML='<span class="log-ok">服务端 → 你：SYN-ACK（我收到了，我也要连，seq=y,ack=x+1）</span>';
+      document.getElementById('b1-ack').disabled=false;
+    },700);
+    return;
+  }
+  if(type==='ACK' && L1_step===1){
+    addPacket('lane1','ACK','c2s');
+    document.getElementById('c-state1').innerHTML='<span class="state-tag st-estab">ESTABLISHED</span>';
+    document.getElementById('l1-log').innerHTML='<span class="log-ok">你 → 服务端：ACK（确认，连接建立！ack=y+1）</span>';
+    document.getElementById('b1-ack').disabled=true;
+    L1_step=2;
+    setTimeout(()=>{
+      document.getElementById('s-state1').innerHTML='<span class="state-tag st-estab">ESTABLISHED</span>';
+      document.getElementById('l1-log').innerHTML='<span class="log-ok">✓ 三次握手完成！双方都进入 ESTABLISHED。</span>';
+      document.getElementById('l1-fb').className='feedback-card correct';
+      document.getElementById('l1-fb').style.display='block';
+      document.getElementById('l1-vd').textContent='✓ 握手成功！';
+      document.getElementById('l1-ex').innerHTML='三次握手：<br>① 客户端 SYN → 服务端<br>② 服务端 SYN-ACK → 客户端（确认+自己的序号）<br>③ 客户端 ACK → 服务端（确认服务端序号）<br>双方都知道对方能收能发，连接建立。';
+    },700);
+  }
+}
+
+/* ── 关2：四次挥手 ── */
+let L2_step=0;
+function sendWave(s) {
+  if(s===0&&L2_step===0){
+    addPacket('lane2','FIN','c2s');
+    document.getElementById('c-state2').innerHTML='<span class="state-tag st-finwait">FIN_WAIT_1</span>';
+    document.getElementById('l2-log').innerHTML='<span class="log-warn">你 → 服务端：FIN（我没有数据要发了）</span>';
+    document.getElementById('b2-fin1').disabled=true;
+    L2_step=1;
+    setTimeout(()=>{
+      addPacket('lane2','ACK','s2c');
+      document.getElementById('c-state2').innerHTML='<span class="state-tag st-finwait">FIN_WAIT_2</span>';
+      document.getElementById('s-state2').innerHTML='<span class="state-tag st-closewait">CLOSE_WAIT</span>';
+      document.getElementById('l2-log').innerHTML='<span class="log-ok">服务端 → 你：ACK（收到，但我还有数据要发）</span>';
+      document.getElementById('b2-ack2').textContent='② 收到服务端 ACK ✓';
+      L2_step=2;
+      setTimeout(()=>{
+        addPacket('lane2','FIN','s2c');
+        document.getElementById('s-state2').innerHTML='<span class="state-tag st-closed">LAST_ACK</span>';
+        document.getElementById('l2-log').innerHTML='<span class="log-warn">服务端 → 你：FIN（我的数据也发完了，我也要关了）</span>';
+        document.getElementById('b2-fin3').textContent='③ 收到服务端 FIN ✓';
+        document.getElementById('b2-ack4').disabled=false;
+        L2_step=3;
+      },800);
+    },700);
+  } else if(s===3&&L2_step===3){
+    addPacket('lane2','ACK','c2s');
+    document.getElementById('c-state2').innerHTML='<span class="state-tag st-timewait">TIME_WAIT</span>';
+    document.getElementById('l2-log').innerHTML='<span class="log-ok">你 → 服务端：ACK（确认，等待 2MSL 后真正关闭）</span>';
+    document.getElementById('b2-ack4').disabled=true;
+    L2_step=4;
+    setTimeout(()=>{
+      document.getElementById('s-state2').innerHTML='<span class="state-tag st-closed">CLOSED</span>';
+      document.getElementById('l2-log').innerHTML='<span class="log-ok">✓ 四次挥手完成！服务端 CLOSED，客户端 TIME_WAIT 等 2MSL 后关闭。</span>';
+      document.getElementById('l2-fb').className='feedback-card correct';
+      document.getElementById('l2-fb').style.display='block';
+      document.getElementById('l2-vd').textContent='✓ 挥手成功！';
+      document.getElementById('l2-ex').innerHTML='四次挥手原因：<strong>TCP 全双工</strong>，两个方向独立关闭。客户端 FIN → 服务端 ACK（服务端还有数据要发）→ 服务端 FIN → 客户端 ACK。两次独立关闭，不能像握手那样合并为一次。';
+    },700);
+  }
+}
+
+/* ── 关3 ── */
+let L3_picked=null;
+function pickL3(v,el){
+  L3_picked=v;
+  document.querySelectorAll('#l3-opts .opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  document.getElementById('l3-submit').style.display='block';
+}
+function submitL3(){
+  const ok=L3_picked==='ab';
+  document.querySelectorAll('#l3-opts .opt-btn').forEach(b=>{
+    const v=b.onclick.toString().match(/'([^']+)'/)?.[1];
+    if(v==='ab') b.classList.add('ok');
+    else if(v===L3_picked&&!ok) b.classList.add('bad');
+  });
+  showFb('l3',ok,'✓ 两个原因都对！','✗ 答错了',
+    'TIME_WAIT 的两个目的：<br>① <strong>保证最后的 ACK 送达</strong>：如果 ACK 丢失，服务端重发 FIN，客户端在 TIME_WAIT 期间能重新 ACK；<br>② <strong>防止旧报文污染新连接</strong>：2MSL 足以让所有迷途报文消亡，此端口复用时不会收到旧数据。',
+    'TIME_WAIT 同时有两个目的：保证 ACK 送达 + 防止旧报文。仅选 A 或 B 都是不完整的。');
+}
+
+/* ── 关4：状态机 ── */
+const L4_CASES = [
+  {desc:'服务端正在等待客户端的第一次 SYN 请求',ans:'LISTEN',opts:['LISTEN','SYN_SENT','SYN_RCVD','ESTABLISHED']},
+  {desc:'客户端发送 SYN 后，等待服务端的 SYN-ACK',ans:'SYN_SENT',opts:['LISTEN','SYN_SENT','FIN_WAIT_1','CLOSE_WAIT']},
+  {desc:'客户端主动 FIN 后，收到了服务端的 ACK，在等服务端的 FIN',ans:'FIN_WAIT_2',opts:['TIME_WAIT','FIN_WAIT_1','FIN_WAIT_2','CLOSE_WAIT']},
+  {desc:'服务端收到客户端的 FIN，发了 ACK，但自己还有数据要发送',ans:'CLOSE_WAIT',opts:['LAST_ACK','CLOSE_WAIT','TIME_WAIT','FIN_WAIT_2']},
+];
+const L4_STATE={};
+function initL4(){
+  L4_CASES.forEach((_,i)=>L4_STATE[i]=null);
+  document.getElementById('l4-cases').innerHTML=L4_CASES.map((c,i)=>`
+    <div class="card" style="margin:0 0 10px;" id="l4c-${i}">
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">${i+1}. ${c.desc}</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${c.opts.map(o=>`<button class="opt-btn" style="flex:1;min-width:100px;" onclick="pickL4(${i},'${o}',this)">${o}</button>`).join('')}
+      </div>
+    </div>`).join('');
+}
+function pickL4(i,v,el){
+  L4_STATE[i]=v;
+  el.closest('div').querySelectorAll('.opt-btn').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+  if(L4_CASES.every((_,j)=>L4_STATE[j])) document.getElementById('l4-submit').style.display='block';
+}
+function submitL4(){
+  let wrong=0;
+  L4_CASES.forEach((c,i)=>{
+    const btns=document.getElementById('l4c-'+i).querySelectorAll('.opt-btn');
+    btns.forEach(b=>{
+      const v=b.onclick.toString().match(/'([^']+)'/g)?.[1]?.replace(/'/g,'');
+      if(v===c.ans) b.classList.add('ok');
+      else if(v===L4_STATE[i]&&L4_STATE[i]!==c.ans) b.classList.add('bad');
+    });
+    if(L4_STATE[i]!==c.ans) wrong++;
+  });
+  showFb('l4',wrong===0,'✓ 状态机全对！',`✗ 答错 ${wrong} 个`,
+    '关键状态：LISTEN（等待SYN）→ SYN_SENT（发了SYN等回应）→ ESTABLISHED（连接中）→ FIN_WAIT_1/2（主动关闭方等待）→ TIME_WAIT（最后等待）。服务端被动关闭：CLOSE_WAIT（收到FIN后还有数据）→ LAST_ACK（发了FIN等确认）。',
+    '重点记：主动关闭方经历 FIN_WAIT_1 → FIN_WAIT_2 → TIME_WAIT；被动关闭方经历 CLOSE_WAIT → LAST_ACK → CLOSED。');
+}
+
+/* ── 关5 ── */
+function submitL5(){
+  const c1=document.getElementById('ch5-1').checked;
+  const c2=document.getElementById('ch5-2').checked;
+  const c3=document.getElementById('ch5-3').checked;
+  const c4=document.getElementById('ch5-4').checked;
+  const ok=c1&&c2&&c3&&c4;
+  showFb('l5',ok,'✓ 全部正确！',`✗ 有误`,
+    '①②③④ 全部正确。握手3次：SYN-ACK 合并节省一次（且2次不够，无法防旧SYN）。挥手4次：全双工两方向各自 FIN+ACK，且服务端收到FIN后可能还有数据，不能立即 FIN（所以无法合并为3次）。',
+    '4个选项都是正确的。特别注意：②挥手因为全双工所以4次；③服务端的ACK和FIN不能像握手那样合并，因为服务端可能还有数据要发。');
+}
+</script>
+</body>
+</html>
