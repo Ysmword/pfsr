@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>I/O 多路复用模拟器</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+:root {
+  --accent:     #3b82f6;
+  --accent-dim: rgba(59, 130, 246, 0.25);
+}
+/* ===== 游戏专属色覆盖（select/poll/epoll badge 颜色） ===== */
+
+/* ===== Screens ===== */
+.screen { max-width: 960px; padding: 24px; }
+
+/* ===== Intro Screen ===== */
+.intro-card {
+  text-align: center;
+  padding: 60px 40px;
+}
+.intro-card h2 {
+  font-size: 32px;
+  margin-bottom: 16px;
+}
+.intro-card p {
+  color: #94a3b8;
+  font-size: 16px;
+  line-height: 1.8;
+  max-width: 600px;
+  margin: 0 auto 32px;
+}
+.btn { padding: 14px 36px; font-size: 16px; }
+.btn-blue   { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+.btn-green  { background: linear-gradient(135deg, #10b981, #059669); }
+.btn-yellow { background: linear-gradient(135deg, #f59e0b, #d97706); }
+
+/* ===== Mode Intro ===== */
+.mode-intro {
+  text-align: center;
+  padding: 40px;
+}
+.mode-intro .mode-badge {
+  display: inline-block;
+  padding: 8px 24px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+.badge-select { background: #dc2626; }
+.badge-poll { background: #f59e0b; color: #000; }
+.badge-epoll { background: #10b981; }
+.mode-intro h2 { font-size: 28px; margin-bottom: 20px; }
+.mode-features {
+  text-align: left;
+  max-width: 500px;
+  margin: 0 auto 32px;
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 24px;
+  border: 1px solid #334155;
+}
+.mode-features .feature {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #334155;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.mode-features .feature:last-child { border-bottom: none; }
+.feature-icon {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* ===== Game Play ===== */
+.game-area {
+  display: flex;
+  gap: 20px;
+}
+.game-main { flex: 1; }
+.game-sidebar { width: 260px; flex-shrink: 0; }
+
+/* Step indicator */
+.step-bar {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 16px;
+  background: #1e293b;
+  border-radius: 10px;
+  padding: 6px;
+}
+.step-item {
+  flex: 1;
+  text-align: center;
+  padding: 8px 4px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  transition: all 0.3s;
+}
+.step-item.active { background: #334155; color: #60a5fa; }
+.step-item.done { color: #10b981; }
+.step-item.skipped { color: #475569; text-decoration: line-through; }
+
+/* Instruction box */
+.instruction {
+  background: linear-gradient(135deg, #1e293b, #1e3050);
+  border: 2px solid #334155;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  min-height: 70px;
+}
+.instruction .step-label {
+  font-size: 12px;
+  color: #60a5fa;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+}
+.instruction .step-text {
+  font-size: 15px;
+  line-height: 1.6;
+}
+.instruction .step-text .hl { color: #fbbf24; font-weight: 600; }
+
+/* Memory spaces (for select copy visualization) */
+.spaces-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.space-box {
+  flex: 1;
+  background: #1e293b;
+  border: 2px dashed #334155;
+  border-radius: 10px;
+  padding: 12px;
+  min-height: 60px;
+  transition: border-color 0.3s;
+}
+.space-box.highlight { border-color: #60a5fa; border-style: solid; }
+.space-box .space-title {
+  font-size: 11px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+.fd-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.fd-tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #334155;
+  color: #94a3b8;
+  transition: all 0.3s;
+}
+.fd-tag.copying {
+  background: #3b82f6;
+  color: white;
+  animation: fadeIn 0.3s;
+}
+.fd-tag.destroyed {
+  opacity: 0.3;
+  text-decoration: line-through;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Table grid */
+.table-section {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #334155;
+}
+.table-section-title {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.tables-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+.table-cell {
+  aspect-ratio: 1;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  border: 3px solid transparent;
+  transition: all 0.25s;
+  cursor: default;
+  position: relative;
+  user-select: none;
+}
+
+/* Table states */
+.table-cell.idle { background: #334155; color: #64748b; }
+.table-cell.clickable { cursor: pointer; }
+.table-cell.clickable:hover { transform: scale(1.08); }
+.table-cell.checking { background: #1d4ed8; color: white; border-color: #3b82f6; }
+.table-cell.found {
+  background: #b45309;
+  color: white;
+  border-color: #f59e0b;
+  animation: popIn 0.35s ease-out;
+}
+.table-cell.not-found {
+  background: #1e293b;
+  color: #475569;
+}
+.table-cell.revealed {
+  background: #f59e0b;
+  color: #000;
+  border-color: #fbbf24;
+  cursor: pointer;
+  animation: glowPulse 1.2s infinite;
+}
+.table-cell.served {
+  background: #059669;
+  color: white;
+  border-color: #10b981;
+  animation: popIn 0.3s ease-out;
+}
+.table-cell.registered {
+  background: #334155;
+  color: #60a5fa;
+  border-color: #3b82f6;
+  border-style: dashed;
+}
+.table-cell.locked {
+  background: #1e293b;
+  color: #334155;
+  border: 2px dashed #2a3444;
+  cursor: not-allowed;
+}
+.table-cell .table-label { font-size: 11px; margin-top: 2px; color: inherit; opacity: 0.7; }
+.table-cell .emoji { font-size: 18px; line-height: 1; }
+
+@keyframes popIn {
+  0% { transform: scale(0.85); }
+  60% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+@keyframes glowPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.3); }
+  50% { box-shadow: 0 0 16px 4px rgba(245,158,11,0.25); }
+}
+
+/* Sidebar */
+.panel {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 14px;
+  border: 1px solid #334155;
+  margin-bottom: 12px;
+}
+.panel h3 {
+  font-size: 12px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+}
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+  font-size: 13px;
+}
+.stat-row .val { font-weight: 700; }
+.stat-row .val.blue { color: #60a5fa; }
+.stat-row .val.green { color: #10b981; }
+.stat-row .val.yellow { color: #f59e0b; }
+.stat-row .val.red { color: #ef4444; }
+
+/* Operation log */
+.op-log {
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 11px;
+  font-family: monospace;
+  line-height: 1.7;
+}
+.op-log::-webkit-scrollbar { width: 3px; }
+.op-log::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+.op-entry { padding: 1px 0; }
+.op-entry.info { color: #60a5fa; }
+.op-entry.ok { color: #10b981; }
+.op-entry.warn { color: #f59e0b; }
+.op-entry.err { color: #ef4444; }
+
+/* Action button area */
+.action-area {
+  margin-top: 16px;
+  text-align: center;
+}
+.action-area .btn { min-width: 200px; }
+
+/* ===== Mode Summary ===== */
+.summary-card {
+  text-align: center;
+  padding: 40px;
+}
+.summary-card h2 { font-size: 26px; margin-bottom: 24px; }
+.summary-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  max-width: 500px;
+  margin: 0 auto 32px;
+}
+.summary-stat {
+  background: #1e293b;
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid #334155;
+}
+.summary-stat .val { font-size: 32px; font-weight: 700; }
+.summary-stat .label { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+
+/* ===== Final Comparison ===== */
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 24px 0;
+  font-size: 14px;
+}
+.compare-table th {
+  padding: 12px;
+  background: #334155;
+  color: #94a3b8;
+  font-weight: 600;
+  text-align: center;
+}
+.compare-table th:first-child { border-radius: 8px 0 0 0; text-align: left; }
+.compare-table th:last-child { border-radius: 0 8px 0 0; }
+.compare-table td {
+  padding: 12px;
+  text-align: center;
+  border-bottom: 1px solid #334155;
+  font-weight: 600;
+}
+.compare-table td:first-child {
+  text-align: left;
+  color: #94a3b8;
+  font-weight: 400;
+}
+.compare-table .best { color: #10b981; }
+.compare-table .worst { color: #ef4444; }
+.compare-table .mid { color: #f59e0b; }
+
+.insight-box {
+  background: #1e293b;
+  border-left: 4px solid #60a5fa;
+  border-radius: 0 8px 8px 0;
+  padding: 16px 20px;
+  margin: 16px 0;
+  font-size: 14px;
+  line-height: 1.8;
+  text-align: left;
+}
+.insight-box b { color: #fbbf24; }
+
+
+@media (max-width: 768px) {
+  .game-area { flex-direction: column; }
+  .game-sidebar { width: 100%; }
+  .tables-grid { grid-template-columns: repeat(5, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<nav class="game-topbar">
+  <a class="game-topbar__back" href="/study_game/">← 返回</a>
+  <h1 class="game-topbar__title">I/O 多路复用 · 亲手模拟器</h1>
+  <div class="game-topbar__progress">
+    <span style="font-size:11px;color:var(--text-dim);">select</span>
+    <div class="game-topbar__dot" id="pd0"></div>
+    <div class="game-topbar__dot" id="pd1"></div>
+    <div class="game-topbar__dot" id="pd2"></div>
+    <span style="font-size:11px;color:var(--text-dim);">poll</span>
+    <div class="game-topbar__dot" id="pd3"></div>
+    <div class="game-topbar__dot" id="pd4"></div>
+    <div class="game-topbar__dot" id="pd5"></div>
+    <span style="font-size:11px;color:var(--text-dim);">epoll</span>
+    <div class="game-topbar__dot" id="pd6"></div>
+    <div class="game-topbar__dot" id="pd7"></div>
+    <div class="game-topbar__dot" id="pd8"></div>
+  </div>
+</nav>
+
+<!-- Screen: Intro -->
+<div class="screen active" id="screen-intro">
+  <div class="intro-card fade-in">
+    <h2>欢迎来到 I/O 多路复用模拟器</h2>
+    <p>
+      在这个游戏里，你不是服务员——<br>
+      <b>你就是操作系统的多路复用机制本身。</b><br><br>
+      你将亲手走一遍 select、poll、epoll 的每一步操作流程，<br>
+      亲身感受它们的区别。
+    </p>
+    <button class="btn btn-blue" onclick="startModeIntro()">开始体验</button>
+  </div>
+</div>
+
+<!-- Screen: Mode Intro -->
+<div class="screen" id="screen-mode-intro">
+  <div class="mode-intro fade-in" id="modeIntroContent"></div>
+</div>
+
+<!-- Screen: Game Play -->
+<div class="screen" id="screen-game">
+  <div class="game-area fade-in">
+    <div class="game-main">
+      <!-- Step bar -->
+      <div class="step-bar" id="stepBar"></div>
+      <!-- Instruction -->
+      <div class="instruction" id="instructionBox">
+        <div class="step-label" id="instrLabel"></div>
+        <div class="step-text" id="instrText"></div>
+      </div>
+      <!-- Memory spaces (select only) -->
+      <div class="spaces-row" id="spacesRow" style="display:none;">
+        <div class="space-box" id="userSpace">
+          <div class="space-title">用户空间（fd_set）</div>
+          <div class="fd-tags" id="userSpaceTags"></div>
+        </div>
+        <div class="space-box" id="kernelSpace">
+          <div class="space-title">内核空间（拷贝）</div>
+          <div class="fd-tags" id="kernelSpaceTags"></div>
+        </div>
+      </div>
+      <!-- Tables -->
+      <div class="table-section">
+        <div class="table-section-title">
+          <span id="tableSectionLabel">餐厅大厅</span>
+          <span id="tableCount"></span>
+        </div>
+        <div class="tables-grid" id="tablesGrid"></div>
+      </div>
+      <!-- Action button -->
+      <div class="action-area" id="actionArea"></div>
+    </div>
+    <div class="game-sidebar">
+      <div class="panel">
+        <h3 id="modePanelTitle">当前模式</h3>
+        <div class="stat-row"><span>轮次</span><span class="val blue" id="sRound">-</span></div>
+        <div class="stat-row"><span>已服务</span><span class="val green" id="sServed">0</span></div>
+        <div class="stat-row"><span>已流失</span><span class="val red" id="sLost">0</span></div>
+      </div>
+      <div class="panel">
+        <h3>操作计数</h3>
+        <div class="stat-row"><span>复制操作</span><span class="val yellow" id="sCopy">0</span></div>
+        <div class="stat-row"><span>逐桌扫描</span><span class="val yellow" id="sScan">0</span></div>
+        <div class="stat-row"><span>注册操作</span><span class="val yellow" id="sRegister">0</span></div>
+        <div class="stat-row"><span>服务操作</span><span class="val green" id="sServeOp">0</span></div>
+        <div style="border-top:1px solid #475569;margin-top:6px;padding-top:6px;">
+          <div class="stat-row"><span><b>总操作数</b></span><span class="val" style="color:#e2e8f0;font-size:18px;" id="sTotal">0</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>操作日志</h3>
+        <div class="op-log" id="opLog"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Screen: Mode Summary -->
+<div class="screen" id="screen-mode-summary">
+  <div class="summary-card fade-in" id="modeSummaryContent"></div>
+</div>
+
+<!-- Screen: Final Comparison -->
+<div class="screen" id="screen-final">
+  <div class="summary-card fade-in" id="finalContent"></div>
+</div>
+
+<script src="../game-utils.js"></script>
+<script>
+// ==================== CONSTANTS ====================
+const MODE_CONFIGS = {
+  select: {
+    name: 'select',
+    label: 'SELECT',
+    color: '#ef4444',
+    badgeClass: 'badge-select',
+    maxTables: 10,
+    lockedTables: 5, // show 5 locked tables beyond max
+    rounds: [
+      { customers: [1, 4, 7] },
+      { customers: [0, 3, 5, 9] },
+      { customers: [2, 6, 8], newTableAttempt: true },
+    ],
+    features: [
+      { icon: '📋', bg: '#dc2626', text: '每一轮都要把 fd_set <b>从用户空间拷贝到内核空间</b>' },
+      { icon: '🔍', bg: '#f59e0b', text: '内核收到后，<b>逐个 fd 扫描</b>看谁有数据' },
+      { icon: '🚫', bg: '#475569', text: '最多只能监听 <b>10 个 fd</b>（FD_SETSIZE 限制）' },
+      { icon: '🗑️', bg: '#6366f1', text: '每次调用后 fd_set 被<b>修改/销毁</b>，下轮要重新设置' },
+    ],
+  },
+  poll: {
+    name: 'poll',
+    label: 'POLL',
+    color: '#f59e0b',
+    badgeClass: 'badge-poll',
+    maxTables: 20,
+    lockedTables: 0,
+    rounds: [
+      { customers: [1, 7, 12] },
+      { customers: [0, 5, 9, 14, 18] },
+      { customers: [2, 6, 10, 13, 16, 19], scaleMsg: '桌数越多，你需要扫描的桌子就越多……' },
+    ],
+    features: [
+      { icon: '✅', bg: '#10b981', text: '<b>没有数量限制</b>，可以监听任意多个 fd' },
+      { icon: '📋', bg: '#6366f1', text: '<b>不需要每次拷贝</b> fd_set（改用 pollfd 数组）' },
+      { icon: '🔍', bg: '#f59e0b', text: '但还是要<b>逐个 fd 遍历</b>检查谁有数据 — O(n)' },
+      { icon: '😩', bg: '#ef4444', text: 'fd 越多，每次遍历越慢 — <b>规模是它的敌人</b>' },
+    ],
+  },
+  epoll: {
+    name: 'epoll',
+    label: 'EPOLL',
+    color: '#10b981',
+    badgeClass: 'badge-epoll',
+    maxTables: 20,
+    lockedTables: 0,
+    rounds: [
+      { customers: [1, 7, 12] },
+      { customers: [0, 5, 9, 14, 18] },
+      { customers: [2, 6, 10, 13, 16, 19] },
+    ],
+    features: [
+      { icon: '📝', bg: '#3b82f6', text: '先 <b>epoll_ctl</b> 注册一次要监听的 fd（只需一次！）' },
+      { icon: '⚡', bg: '#10b981', text: '然后调用 <b>epoll_wait</b>，内核<b>只返回有事件的 fd</b>' },
+      { icon: '🚀', bg: '#f59e0b', text: '不需要遍历全部！复杂度 O(就绪数)，<b>跟总数无关</b>' },
+      { icon: '✅', bg: '#10b981', text: '新增 fd 只需注册新的，<b>不影响已有的</b>' },
+    ],
+  },
+};
+
+const MODE_ORDER = ['select', 'poll', 'epoll'];
+
+// ==================== STATE ====================
+let S = {
+  modeIdx: 0,
+  roundIdx: 0,
+  phase: 'intro', // intro, mode-intro, copy, scan, register, wait, serve, round-end
+  tables: [],
+  ops: { copy: 0, scan: 0, serve: 0, register: 0, wait: 0 },
+  scannedThisRound: 0,
+  registeredSet: new Set(),
+  epollFirstRound: true,
+  results: [], // { mode, ops, served, lost }
+  served: 0,
+  lost: 0,
+};
+
+function curMode() { return MODE_ORDER[S.modeIdx]; }
+function curConfig() { return MODE_CONFIGS[curMode()]; }
+function curRound() { return curConfig().rounds[S.roundIdx]; }
+function totalOps() { return S.ops.copy + S.ops.scan + S.ops.serve + S.ops.register + S.ops.wait; }
+
+// ==================== SCREEN MANAGEMENT ====================
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+}
+
+function updateProgressBar() {
+  for (let i = 0; i < 9; i++) {
+    const dot = document.getElementById('pd' + i);
+    const modeI = Math.floor(i / 3);
+    const roundI = i % 3;
+    dot.className = 'game-topbar__dot';
+    if (modeI < S.modeIdx) dot.classList.add('game-topbar__dot--done');
+    else if (modeI === S.modeIdx && roundI < S.roundIdx) dot.classList.add('game-topbar__dot--done');
+    else if (modeI === S.modeIdx && roundI === S.roundIdx && S.phase !== 'mode-intro') dot.classList.add('game-topbar__dot--active');
+  }
+}
+
+// ==================== INTRO ====================
+function startModeIntro() {
+  S.phase = 'mode-intro';
+  S.roundIdx = 0;
+  S.ops = { copy: 0, scan: 0, serve: 0, register: 0, wait: 0 };
+  S.served = 0;
+  S.lost = 0;
+  S.registeredSet = new Set();
+  S.epollFirstRound = true;
+
+  const cfg = curConfig();
+  let html = `
+    <div class="mode-badge ${cfg.badgeClass}">模式 ${S.modeIdx + 1}/3</div>
+    <h2>接下来你将体验：${cfg.label} 模式</h2>
+    <div class="mode-features">
+      ${cfg.features.map(f => `
+        <div class="feature">
+          <div class="feature-icon" style="background:${f.bg}">${f.icon}</div>
+          <div>${f.text}</div>
+        </div>
+      `).join('')}
+    </div>
+    <p style="color:#94a3b8;margin-bottom:24px;">共 ${cfg.rounds.length} 轮，你将亲手执行每一步操作</p>
+    <button class="btn btn-blue" onclick="startRound()">开始第 1 轮</button>
+  `;
+  document.getElementById('modeIntroContent').innerHTML = html;
+  showScreen('mode-intro');
+  updateProgressBar();
+}
+
+// ==================== ROUND START ====================
+function startRound() {
+  const cfg = curConfig();
+  const round = curRound();
+
+  // Initialize tables
+  S.tables = [];
+  for (let i = 0; i < cfg.maxTables; i++) {
+    S.tables.push({
+      id: i,
+      wantsService: round.customers.includes(i),
+      scanned: false,
+      revealed: false,
+      served: false,
+    });
+  }
+  S.scannedThisRound = 0;
+
+  showScreen('game');
+  document.getElementById('modePanelTitle').textContent = cfg.label + ' 模式';
+  document.getElementById('sRound').textContent = `${S.roundIdx + 1} / ${cfg.rounds.length}`;
+
+  // Decide first phase
+  if (curMode() === 'select') {
+    startCopyPhase();
+  } else if (curMode() === 'poll') {
+    startScanPhase();
+  } else {
+    // epoll
+    if (S.epollFirstRound) {
+      startRegisterPhase();
+    } else {
+      startWaitPhase();
+    }
+  }
+
+  updateSidebar();
+  updateProgressBar();
+
+  // Scale message
+  if (round.scaleMsg) {
+    addLog('warn', round.scaleMsg);
+  }
+  if (round.newTableAttempt) {
+    addLog('err', '有新客人想坐第 11 桌，但 select 上限只有 10！无法加入！');
+    S.lost++;
+    updateSidebar();
+  }
+}
+
+// ==================== STEP BAR ====================
+function renderStepBar(steps, activeIdx) {
+  const bar = document.getElementById('stepBar');
+  bar.innerHTML = steps.map((s, i) => {
+    let cls = 'step-item';
+    if (i < activeIdx) cls += ' done';
+    else if (i === activeIdx) cls += ' active';
+    if (s.skipped) cls += ' skipped';
+    return `<div class="${cls}">${s.skipped ? '✕ ' : i < activeIdx ? '✓ ' : ''}${s.label}</div>`;
+  }).join('');
+}
+
+// ==================== COPY PHASE (select only) ====================
+function startCopyPhase() {
+  S.phase = 'copy';
+  const mode = curMode();
+
+  if (mode === 'select') {
+    renderStepBar([
+      { label: '① 拷贝 fd_set' },
+      { label: '② 逐个扫描' },
+      { label: '③ 服务客人' },
+    ], 0);
+  }
+
+  setInstruction('拷贝名单',
+    '每次调用 select() 前，必须把 <span class="hl">fd_set 从用户空间拷贝到内核空间</span>。<br>点击下方按钮模拟这次拷贝。');
+
+  // Show spaces
+  const spacesRow = document.getElementById('spacesRow');
+  spacesRow.style.display = 'flex';
+
+  // Fill user space
+  const userTags = document.getElementById('userSpaceTags');
+  userTags.innerHTML = S.tables.map(t => `<span class="fd-tag">fd${t.id}</span>`).join('');
+
+  // Clear kernel space
+  document.getElementById('kernelSpaceTags').innerHTML = '<span style="color:#475569;font-size:11px;">（空）</span>';
+  document.getElementById('userSpace').classList.add('highlight');
+  document.getElementById('kernelSpace').classList.remove('highlight');
+
+  renderTables();
+  setAction(`<button class="btn btn-yellow" onclick="doCopy()">复制 fd_set → 内核空间</button>`);
+}
+
+function doCopy() {
+  S.ops.copy += S.tables.length;
+  addLog('info', `拷贝 ${S.tables.length} 个 fd 到内核空间（${S.tables.length} 次拷贝操作）`);
+
+  // Animate copy
+  const kernelTags = document.getElementById('kernelSpaceTags');
+  kernelTags.innerHTML = '';
+  document.getElementById('userSpace').classList.remove('highlight');
+  document.getElementById('kernelSpace').classList.add('highlight');
+
+  let i = 0;
+  const copyNext = () => {
+    if (i < S.tables.length) {
+      const tag = document.createElement('span');
+      tag.className = 'fd-tag copying';
+      tag.textContent = 'fd' + S.tables[i].id;
+      kernelTags.appendChild(tag);
+      i++;
+      updateSidebar();
+      setTimeout(copyNext, 80);
+    } else {
+      addLog('ok', '拷贝完成！现在开始逐个扫描');
+      setTimeout(() => startScanPhase(), 400);
+    }
+  };
+  setAction('');
+  copyNext();
+}
+
+// ==================== SCAN PHASE (select & poll) ====================
+function startScanPhase() {
+  S.phase = 'scan';
+  S.scannedThisRound = 0;
+  const mode = curMode();
+
+  // Reset scan state
+  S.tables.forEach(t => { t.scanned = false; t.revealed = false; });
+
+  if (mode === 'select') {
+    renderStepBar([
+      { label: '① 拷贝 fd_set' },
+      { label: '② 逐个扫描' },
+      { label: '③ 服务客人' },
+    ], 1);
+    setInstruction('逐桌扫描',
+      `内核拿到名单后，<span class="hl">逐个检查每个 fd</span> 是否有数据。<br>请<span class="hl">逐个点击</span>每张桌子来检查（共 ${S.tables.length} 张）。`);
+  } else {
+    renderStepBar([
+      { label: '① 拷贝', skipped: true },
+      { label: '② 逐个扫描' },
+      { label: '③ 服务客人' },
+    ], 1);
+    setInstruction('逐桌扫描',
+      `poll 不需要拷贝 fd_set（省了一步），但还是要<span class="hl">逐个遍历</span>所有 fd。<br>请<span class="hl">逐个点击</span>每张桌子来检查（共 ${S.tables.length} 张）。`);
+    document.getElementById('spacesRow').style.display = 'none';
+  }
+
+  renderTables();
+  setAction('');
+}
+
+function scanTable(idx) {
+  if (S.phase !== 'scan') return;
+  const t = S.tables[idx];
+  if (t.scanned) return;
+
+  t.scanned = true;
+  S.scannedThisRound++;
+  S.ops.scan++;
+
+  if (t.wantsService) {
+    t.revealed = true;
+    addLog('warn', `fd${idx}: 有数据！（客人举手了）`);
+  } else {
+    addLog('info', `fd${idx}: 无数据`);
+  }
+
+  updateSidebar();
+  renderTables();
+
+  // Check if all scanned
+  if (S.scannedThisRound >= S.tables.length) {
+    const found = S.tables.filter(t => t.revealed).length;
+    addLog('ok', `扫描完成！遍历了 ${S.tables.length} 个 fd，发现 ${found} 个有数据`);
+    setTimeout(() => startServePhase(), 500);
+  } else {
+    setInstruction('逐桌扫描',
+      `继续点击检查剩余桌子。已检查 <span class="hl">${S.scannedThisRound}/${S.tables.length}</span>`);
+  }
+}
+
+// ==================== REGISTER PHASE (epoll only) ====================
+function startRegisterPhase() {
+  S.phase = 'register';
+
+  renderStepBar([
+    { label: '① epoll_ctl 注册' },
+    { label: '② epoll_wait' },
+    { label: '③ 服务客人' },
+  ], 0);
+
+  const unregistered = S.tables.filter(t => !S.registeredSet.has(t.id));
+
+  if (S.epollFirstRound) {
+    setInstruction('注册监听（只需一次）',
+      `调用 <span class="hl">epoll_ctl(EPOLL_CTL_ADD)</span> 注册你关心的 fd。<br>点击每张桌子注册（共 ${unregistered.length} 张）。<b>以后不用再注册了！</b>`);
+  } else {
+    setInstruction('注册新 fd',
+      `新增了桌子，只需注册<span class="hl">新的</span>（${unregistered.length} 张），旧的不用管！`);
+  }
+
+  renderTables();
+  setAction('');
+}
+
+function registerTable(idx) {
+  if (S.phase !== 'register') return;
+  if (S.registeredSet.has(idx)) return;
+
+  S.registeredSet.add(idx);
+  S.ops.register++;
+  addLog('info', `epoll_ctl(ADD, fd${idx}) — 注册成功`);
+
+  updateSidebar();
+  renderTables();
+
+  // Check if all registered
+  const allRegistered = S.tables.every(t => S.registeredSet.has(t.id));
+  if (allRegistered) {
+    addLog('ok', '所有 fd 已注册！以后新轮次不需要重复注册');
+    S.epollFirstRound = false;
+    setTimeout(() => startWaitPhase(), 500);
+  } else {
+    const left = S.tables.filter(t => !S.registeredSet.has(t.id)).length;
+    setInstruction('注册监听',
+      `还剩 <span class="hl">${left}</span> 张桌子需要注册`);
+  }
+}
+
+// ==================== WAIT PHASE (epoll only) ====================
+function startWaitPhase() {
+  S.phase = 'wait';
+
+  renderStepBar([
+    { label: '① epoll_ctl 注册' },
+    { label: '② epoll_wait' },
+    { label: '③ 服务客人' },
+  ], 1);
+
+  setInstruction('等待事件',
+    `调用 <span class="hl">epoll_wait()</span>，内核<b>直接返回</b>有数据的 fd 列表。<br>不需要你逐个检查！点击按钮调用。`);
+
+  // Reset reveal state
+  S.tables.forEach(t => { t.revealed = false; });
+  renderTables();
+  setAction(`<button class="btn btn-green" onclick="doEpollWait()">调用 epoll_wait()</button>`);
+}
+
+function doEpollWait() {
+  S.ops.wait++;
+
+  // Instantly reveal all wanting-service tables
+  const found = [];
+  S.tables.forEach(t => {
+    if (t.wantsService) {
+      t.revealed = true;
+      found.push(t.id);
+    }
+  });
+
+  addLog('ok', `epoll_wait 返回：${found.length} 个就绪 fd → [${found.map(id => 'fd' + id).join(', ')}]`);
+  addLog('ok', '注意：只用了 1 次操作！不需要遍历全部 fd');
+
+  updateSidebar();
+  renderTables();
+  setTimeout(() => startServePhase(), 500);
+}
+
+// ==================== SERVE PHASE ====================
+function startServePhase() {
+  S.phase = 'serve';
+  const mode = curMode();
+
+  const stepIdx = mode === 'epoll' ? 2 : 2;
+
+  if (mode === 'select') {
+    renderStepBar([
+      { label: '① 拷贝 fd_set' },
+      { label: '② 逐个扫描' },
+      { label: '③ 服务客人' },
+    ], 2);
+  } else if (mode === 'poll') {
+    renderStepBar([
+      { label: '① 拷贝', skipped: true },
+      { label: '② 逐个扫描' },
+      { label: '③ 服务客人' },
+    ], 2);
+  } else {
+    renderStepBar([
+      { label: '① epoll_ctl 注册' },
+      { label: '② epoll_wait' },
+      { label: '③ 服务客人' },
+    ], 2);
+  }
+
+  const count = S.tables.filter(t => t.revealed && !t.served).length;
+  setInstruction('服务客人',
+    `发现 <span class="hl">${count}</span> 桌客人举手了（黄色），<span class="hl">点击</span>他们来服务。`);
+
+  renderTables();
+  setAction('');
+}
+
+function serveTable(idx) {
+  if (S.phase !== 'serve') return;
+  const t = S.tables[idx];
+  if (!t.revealed || t.served) return;
+
+  t.served = true;
+  S.ops.serve++;
+  S.served++;
+  addLog('ok', `服务了 fd${idx} 的客人！`);
+
+  updateSidebar();
+  renderTables();
+
+  // Check if all served
+  const remaining = S.tables.filter(t => t.revealed && !t.served).length;
+  if (remaining === 0) {
+    finishRound();
+  } else {
+    setInstruction('服务客人', `还剩 <span class="hl">${remaining}</span> 桌需要服务`);
+  }
+}
+
+// ==================== ROUND END ====================
+function finishRound() {
+  const mode = curMode();
+  const cfg = curConfig();
+
+  // select: destroy the kernel copy
+  if (mode === 'select') {
+    addLog('err', 'select 返回后，内核中的 fd_set 副本被修改/销毁，下轮要重新拷贝！');
+    const kernelTags = document.getElementById('kernelSpaceTags');
+    if (kernelTags) {
+      kernelTags.querySelectorAll('.fd-tag').forEach(tag => tag.classList.add('destroyed'));
+    }
+  }
+
+  addLog('info', `——— 第 ${S.roundIdx + 1} 轮结束 ———`);
+
+  S.roundIdx++;
+  if (S.roundIdx < cfg.rounds.length) {
+    setAction(`<button class="btn btn-blue" onclick="startRound()">开始第 ${S.roundIdx + 1} 轮</button>`);
+    setInstruction('轮次完成',
+      mode === 'select'
+        ? '注意：下一轮要<span class="hl">重新拷贝</span> fd_set，重新逐桌扫描。'
+        : mode === 'poll'
+          ? '下一轮还是要<span class="hl">重新逐桌扫描</span>所有桌子。'
+          : '下一轮直接调用 <span class="hl">epoll_wait</span> 就行，不需要重新注册。');
+  } else {
+    finishMode();
+  }
+}
+
+// ==================== MODE END ====================
+function finishMode() {
+  const cfg = curConfig();
+
+  S.results.push({
+    mode: cfg.label,
+    color: cfg.color,
+    ops: { ...S.ops },
+    total: totalOps(),
+    served: S.served,
+    lost: S.lost,
+    tables: cfg.maxTables,
+  });
+
+  let html = `
+    <div class="mode-badge ${cfg.badgeClass}">${cfg.label} 模式完成</div>
+    <h2>本模式统计</h2>
+    <div class="summary-stats">
+      <div class="summary-stat">
+        <div class="val" style="color:${cfg.color}">${totalOps()}</div>
+        <div class="label">总操作数</div>
+      </div>
+      <div class="summary-stat">
+        <div class="val" style="color:#10b981">${S.served}</div>
+        <div class="label">服务成功</div>
+      </div>
+      <div class="summary-stat">
+        <div class="val" style="color:#ef4444">${S.lost}</div>
+        <div class="label">流失客人</div>
+      </div>
+    </div>
+    <div class="insight-box">
+      ${mode_insight()}
+    </div>
+  `;
+
+  if (S.modeIdx < 2) {
+    html += `<button class="btn btn-blue" onclick="nextMode()" style="margin-top:16px;">继续体验下一个模式 →</button>`;
+  } else {
+    html += `<button class="btn btn-green" onclick="showFinalComparison()" style="margin-top:16px;">查看三种模式对比</button>`;
+  }
+
+  document.getElementById('modeSummaryContent').innerHTML = html;
+  showScreen('mode-summary');
+  updateProgressBar();
+}
+
+function mode_insight() {
+  const mode = curMode();
+  if (mode === 'select') {
+    return `<b>select 的痛点：</b>每轮都要拷贝 fd_set（${S.ops.copy} 次拷贝操作），每轮都要逐个扫描所有 fd（${S.ops.scan} 次扫描），而且最多只能监听 ${curConfig().maxTables} 个 fd。`;
+  } else if (mode === 'poll') {
+    return `<b>poll 的改进与不足：</b>去掉了拷贝和数量限制（可以监听 ${curConfig().maxTables} 个 fd），但还是要逐个扫描（${S.ops.scan} 次扫描）。fd 越多，扫描量越大。`;
+  } else {
+    return `<b>epoll 的优势：</b>注册 ${S.ops.register} 次（一次性），之后每轮只需 1 次 epoll_wait 就能拿到所有就绪 fd。总操作数 ${totalOps()}，远少于前两种模式。`;
+  }
+}
+
+function nextMode() {
+  S.modeIdx++;
+  startModeIntro();
+}
+
+// ==================== FINAL COMPARISON ====================
+function showFinalComparison() {
+  const r = S.results;
+
+  // Find best/worst for each metric
+  const totals = r.map(x => x.total);
+  const minTotal = Math.min(...totals);
+  const maxTotal = Math.max(...totals);
+
+  let html = `
+    <h2>三种模式对比</h2>
+    <table class="compare-table">
+      <tr>
+        <th>指标</th>
+        ${r.map(x => `<th style="color:${x.color}">${x.mode}</th>`).join('')}
+      </tr>
+      <tr>
+        <td>可监听 fd 数</td>
+        <td class="worst">${r[0].tables}（有上限）</td>
+        <td class="best">${r[1].tables}</td>
+        <td class="best">${r[2].tables}</td>
+      </tr>
+      <tr>
+        <td>拷贝操作</td>
+        <td class="worst">${r[0].ops.copy}</td>
+        <td class="best">0（不需要）</td>
+        <td class="best">0（不需要）</td>
+      </tr>
+      <tr>
+        <td>逐个扫描</td>
+        <td class="worst">${r[0].ops.scan}</td>
+        <td class="worst">${r[1].ops.scan}</td>
+        <td class="best">0（不需要！）</td>
+      </tr>
+      <tr>
+        <td>注册操作</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="mid">${r[2].ops.register}（一次性）</td>
+      </tr>
+      <tr>
+        <td>epoll_wait</td>
+        <td>-</td>
+        <td>-</td>
+        <td class="best">${r[2].ops.wait}（每轮仅 1 次）</td>
+      </tr>
+      <tr>
+        <td><b>总操作数</b></td>
+        ${r.map(x => {
+          const cls = x.total === maxTotal ? 'worst' : x.total === minTotal ? 'best' : 'mid';
+          return `<td class="${cls}" style="font-size:20px;">${x.total}</td>`;
+        }).join('')}
+      </tr>
+      <tr>
+        <td>客人流失</td>
+        ${r.map(x => `<td class="${x.lost > 0 ? 'worst' : 'best'}">${x.lost}</td>`).join('')}
+      </tr>
+    </table>
+
+    <div class="insight-box">
+      <b>核心区别总结：</b><br><br>
+      <b>select</b>：每次调用都要<b>拷贝全量 fd_set</b> + <b>遍历所有 fd</b> + 有数量上限。三重惩罚。<br><br>
+      <b>poll</b>：去掉了拷贝和数量限制，但<b>还是要遍历所有 fd</b>。fd 越多越慢——O(n)。<br><br>
+      <b>epoll</b>：注册一次后，每次调用<b>只返回有事件的 fd</b>。不管总共有多少 fd，操作量只跟"有多少个就绪"有关——O(就绪数)。<br><br>
+      这就是为什么 <b>Redis 在 Linux 上默认使用 epoll</b>——当连接数上万时，差距是碾压级的。
+    </div>
+
+    <button class="btn btn-blue" onclick="restart()" style="margin-top:20px;">重新体验</button>
+  `;
+
+  document.getElementById('finalContent').innerHTML = html;
+  showScreen('final');
+}
+
+function restart() {
+  S.modeIdx = 0;
+  S.results = [];
+  showScreen('intro');
+  updateProgressBar();
+}
+
+// ==================== TABLE RENDERING ====================
+function renderTables() {
+  const grid = document.getElementById('tablesGrid');
+  const cfg = curConfig();
+  grid.innerHTML = '';
+
+  // Active tables
+  S.tables.forEach((t, i) => {
+    const cell = document.createElement('div');
+    cell.className = 'table-cell';
+
+    if (S.phase === 'scan' && !t.scanned) {
+      cell.classList.add('idle', 'clickable');
+      cell.innerHTML = `<span class="emoji">🪑</span><span class="table-label">fd${i}</span>`;
+      cell.onclick = () => scanTable(i);
+    } else if (S.phase === 'scan' && t.scanned) {
+      if (t.wantsService) {
+        cell.classList.add('found');
+        cell.innerHTML = `<span class="emoji">✋</span><span class="table-label">fd${i}</span>`;
+      } else {
+        cell.classList.add('not-found');
+        cell.innerHTML = `<span class="emoji">💤</span><span class="table-label">fd${i}</span>`;
+      }
+    } else if (S.phase === 'register') {
+      if (S.registeredSet.has(i)) {
+        cell.classList.add('registered');
+        cell.innerHTML = `<span class="emoji">✓</span><span class="table-label">fd${i}</span>`;
+      } else {
+        cell.classList.add('idle', 'clickable');
+        cell.innerHTML = `<span class="emoji">🪑</span><span class="table-label">fd${i}</span>`;
+        cell.onclick = () => registerTable(i);
+      }
+    } else if (S.phase === 'wait') {
+      cell.classList.add('registered');
+      cell.innerHTML = `<span class="emoji">🪑</span><span class="table-label">fd${i}</span>`;
+    } else if (S.phase === 'serve') {
+      if (t.served) {
+        cell.classList.add('served');
+        cell.innerHTML = `<span class="emoji">✅</span><span class="table-label">fd${i}</span>`;
+      } else if (t.revealed) {
+        cell.classList.add('revealed', 'clickable');
+        cell.innerHTML = `<span class="emoji">✋</span><span class="table-label">fd${i}</span>`;
+        cell.onclick = () => serveTable(i);
+      } else {
+        cell.classList.add('idle');
+        cell.innerHTML = `<span class="emoji">💤</span><span class="table-label">fd${i}</span>`;
+      }
+    } else if (S.phase === 'copy') {
+      cell.classList.add('idle');
+      cell.innerHTML = `<span class="emoji">🪑</span><span class="table-label">fd${i}</span>`;
+    } else {
+      cell.classList.add('idle');
+      cell.innerHTML = `<span class="emoji">🪑</span><span class="table-label">fd${i}</span>`;
+    }
+
+    grid.appendChild(cell);
+  });
+
+  // Locked tables (select mode)
+  for (let i = 0; i < cfg.lockedTables; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'table-cell locked';
+    cell.innerHTML = `<span class="emoji">🔒</span><span class="table-label">fd${cfg.maxTables + i}</span>`;
+    cell.title = 'FD_SETSIZE 限制，无法监听';
+    grid.appendChild(cell);
+  }
+
+  document.getElementById('tableCount').textContent =
+    `${cfg.maxTables} 桌` + (cfg.lockedTables > 0 ? ` (+${cfg.lockedTables} 锁定)` : '');
+}
+
+// ==================== UI HELPERS ====================
+function setInstruction(label, text) {
+  document.getElementById('instrLabel').textContent = label;
+  document.getElementById('instrText').innerHTML = text;
+}
+
+function setAction(html) {
+  document.getElementById('actionArea').innerHTML = html;
+}
+
+function updateSidebar() {
+  document.getElementById('sServed').textContent = S.served;
+  document.getElementById('sLost').textContent = S.lost;
+  document.getElementById('sCopy').textContent = S.ops.copy;
+  document.getElementById('sScan').textContent = S.ops.scan;
+  document.getElementById('sRegister').textContent = S.ops.register;
+  document.getElementById('sServeOp').textContent = S.ops.serve;
+  document.getElementById('sTotal').textContent = totalOps();
+}
+
+function addLog(type, msg) {
+  const log = document.getElementById('opLog');
+  const entry = document.createElement('div');
+  entry.className = 'op-entry ' + type;
+  entry.textContent = msg;
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+}
+</script>
+
+</body>
+</html>
+

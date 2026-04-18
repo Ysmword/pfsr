@@ -1,0 +1,1543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>我本如此 - 学习游戏中心</title>
+<link rel="stylesheet" href="../shared.css">
+<style>
+/* ===== CSS 变量 ===== */
+:root {
+  /* 覆盖 shared.css 主题色 */
+  --accent:     #f5a623;
+  --accent-dim: rgba(245, 166, 35, 0.27);
+  --color-bg:           #0f0f14;
+  --color-surface:      #1a1520;
+  --color-surface-alt:  #14111a;
+  --color-border:       #2d2535;
+  --color-border-light: #4a3d5a;
+  --color-accent:       #f5a623;
+  --color-accent-glow:  #f5a62344;
+  --color-success:      #4ecca3;
+  --color-warning:      #f5a623;
+  --color-danger:       #ef4444;
+  --color-text:         #ede8f5;
+  --color-text-muted:   #9d94b0;
+  --color-text-dim:     #6b6080;
+
+  --conf-bar-fill:      linear-gradient(90deg, #f5a623, #ff6b35);
+  --conf-bar-glow:      #f5a62366;
+}
+
+/* ===== Reset / body / topbar / screen → 已由 shared.css 提供 ===== */
+
+/* 覆盖 topbar 按钮颜色（confidence 使用自己的 --color-* 变量） */
+.game-topbar__back { background: var(--color-border); border-color: var(--color-border-light); color: var(--color-text-muted); }
+.game-topbar__back:hover { color: var(--color-accent); border-color: var(--color-accent); }
+.game-topbar__title { color: var(--color-accent); }
+
+/* ===== 光芒条 ===== */
+.conf-light-widget {
+  width: 100%;
+  max-width: 960px;
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--color-surface-alt);
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 58px;
+  z-index: 90;
+}
+.conf-light-label {
+  font-size: 12px;
+  color: var(--color-text-dim);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.conf-light-track {
+  flex: 1;
+  height: 8px;
+  background: var(--color-border);
+  border-radius: 4px;
+  overflow: visible;
+  position: relative;
+}
+.conf-light-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--conf-bar-fill);
+  width: 0%;
+  transition: width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative;
+}
+.conf-light-fill::after {
+  content: '';
+  position: absolute;
+  right: -2px;
+  top: -3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ff6b35;
+  box-shadow: 0 0 8px #ff6b3580;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.conf-light-fill.has-value::after {
+  opacity: 1;
+}
+.conf-light-fill.pulse-anim {
+  animation: light-pulse 0.6s ease-out;
+}
+@keyframes light-pulse {
+  0% { filter: brightness(1); }
+  40% { filter: brightness(1.8) drop-shadow(0 0 8px #f5a623); }
+  100% { filter: brightness(1); }
+}
+.conf-light-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 70px;
+  text-align: right;
+  transition: color 0.5s;
+}
+
+/* ===== Screen 切换 → 已由 shared.css 提供 ===== */
+/* 覆盖：confidence 的 screen 不限制 max-width，用自己的 .game-panel 控制 */
+.screen { max-width: none; padding: 0; gap: 0; }
+
+/* ===== 通用容器 ===== */
+.game-panel {
+  width: 100%;
+  max-width: 680px;
+  padding: 40px 24px 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+/* ===== 按钮 → 基础样式由 shared.css 提供，这里覆盖颜色 ===== */
+.btn {
+  background: var(--color-accent);
+  color: #000;
+  padding: 13px 36px;
+  font-size: 16px;
+}
+.btn:hover { box-shadow: 0 6px 20px var(--conf-bar-glow); }
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--color-border-light);
+  color: var(--color-text-muted);
+}
+.btn-ghost:hover { border-color: var(--color-accent); color: var(--color-accent); box-shadow: none; }
+
+/* 淡入动画 → 已由 shared.css 提供 */
+
+/* ===== INTRO 屏 ===== */
+.intro-hero {
+  text-align: center;
+  padding: 70px 24px 50px;
+}
+.intro-hero .conf-title-icon {
+  font-size: 56px;
+  margin-bottom: 24px;
+  display: block;
+  animation: float-icon 3s ease-in-out infinite;
+}
+@keyframes float-icon {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.intro-hero h1 {
+  font-size: 42px;
+  font-weight: 800;
+  color: var(--color-accent);
+  margin-bottom: 12px;
+  letter-spacing: 2px;
+}
+.intro-hero .subtitle {
+  font-size: 16px;
+  color: var(--color-text-muted);
+  margin-bottom: 40px;
+  line-height: 1.8;
+}
+.intro-meta {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 48px;
+  flex-wrap: wrap;
+}
+.intro-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-text-dim);
+}
+.intro-meta-item span { color: var(--color-text-muted); }
+
+/* ===== 关卡完成反馈 ===== */
+.level-complete-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 32px;
+  text-align: center;
+  width: 100%;
+  max-width: 520px;
+}
+.level-complete-card .lc-title {
+  font-size: 13px;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 16px;
+}
+.level-complete-card .lc-text {
+  font-size: 18px;
+  color: var(--color-text);
+  line-height: 1.8;
+  margin-bottom: 28px;
+}
+.level-complete-card .lc-text em {
+  font-style: normal;
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* ===== 关1 呼吸 ===== */
+.breath-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 50px 24px 60px;
+  text-align: center;
+  gap: 40px;
+  width: 100%;
+}
+.breath-prompt {
+  font-size: 15px;
+  color: var(--color-text-muted);
+  line-height: 1.9;
+}
+.breath-orb-wrap {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.breath-orb-ring {
+  position: absolute;
+  border-radius: 50%;
+  background: transparent;
+  border: 2px solid var(--color-accent);
+  opacity: 0;
+  animation: none;
+}
+.breath-orb-ring-1 { width: 100%; height: 100%; }
+.breath-orb-ring-2 { width: 130%; height: 130%; }
+.breath-orb-ring.ripple {
+  animation: orb-ripple 2s ease-out forwards;
+}
+@keyframes orb-ripple {
+  0% { transform: scale(0.8); opacity: 0.5; }
+  100% { transform: scale(1.2); opacity: 0; }
+}
+.breath-orb {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #f5a623cc, #e8622088);
+  box-shadow: 0 0 40px var(--conf-bar-glow), inset 0 0 20px rgba(255,255,255,0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.5s ease-in-out, box-shadow 0.5s;
+  z-index: 1;
+}
+.breath-orb.inhale {
+  transform: scale(1.4);
+  box-shadow: 0 0 60px #f5a62388, inset 0 0 20px rgba(255,255,255,0.1);
+}
+.breath-orb.hold {
+  transform: scale(1.4);
+}
+.breath-orb.exhale {
+  transform: scale(1.0);
+  box-shadow: 0 0 30px var(--conf-bar-glow), inset 0 0 20px rgba(255,255,255,0.05);
+}
+.breath-orb-text {
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.85);
+  text-align: center;
+  line-height: 1.4;
+  user-select: none;
+}
+.breath-count {
+  font-size: 13px;
+  color: var(--color-text-dim);
+  min-height: 20px;
+  transition: opacity 0.3s;
+}
+.breath-done-msg {
+  font-size: 17px;
+  color: var(--color-text-muted);
+  line-height: 1.8;
+  max-width: 400px;
+  text-align: center;
+  display: none;
+}
+.breath-done-msg em { font-style: normal; color: var(--color-accent); }
+
+/* ===== 关2 想起 ===== */
+.achieve-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 24px 60px;
+  width: 100%;
+  gap: 24px;
+}
+.achieve-header { text-align: center; }
+.achieve-header h2 { font-size: 24px; margin-bottom: 10px; }
+.achieve-header p { font-size: 15px; color: var(--color-text-muted); line-height: 1.7; }
+.achieve-count-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text-dim);
+}
+.achieve-count-bar .count-num {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-accent);
+}
+.achieve-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 560px;
+}
+.achieve-item {
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  font-size: 15px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.achieve-item:hover:not(.selected) {
+  border-color: var(--color-border-light);
+  color: var(--color-text);
+}
+.achieve-item.selected {
+  border-color: var(--color-accent);
+  background: #2a1e0a;
+  color: var(--color-accent);
+  font-weight: 600;
+  animation: achieve-pop 0.3s ease-out;
+}
+@keyframes achieve-pop {
+  0% { transform: scale(0.96); }
+  60% { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+.achieve-item .ai-check {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border-light);
+  flex-shrink: 0;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+.achieve-item.selected .ai-check {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #000;
+}
+
+/* 徽章展示 */
+.achieve-badges {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  display: none;
+}
+.achieve-badge {
+  background: linear-gradient(135deg, #2a1e0a, #3d2a10);
+  border: 1.5px solid var(--color-accent);
+  border-radius: 24px;
+  padding: 8px 20px;
+  font-size: 14px;
+  color: var(--color-accent);
+  font-weight: 600;
+  animation: fadeInUp 0.4s ease-out both;
+}
+
+/* ===== 关3 说出 ===== */
+.saychoise-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 24px 60px;
+  width: 100%;
+  gap: 28px;
+}
+.saychoice-header { text-align: center; }
+.saychoice-header h2 { font-size: 24px; margin-bottom: 10px; }
+.saychoice-header p { font-size: 15px; color: var(--color-text-muted); line-height: 1.7; }
+.saychoice-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 480px;
+}
+.saychoice-option {
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: 14px;
+  padding: 20px 24px;
+  font-size: 17px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.25s;
+  text-align: center;
+  line-height: 1.6;
+  user-select: none;
+}
+.saychoice-option:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+  transform: translateY(-2px);
+}
+.saychoice-option.chosen {
+  border-color: var(--color-accent);
+  background: #2a1e0a;
+  color: var(--color-accent);
+  font-weight: 700;
+  font-size: 20px;
+  box-shadow: 0 0 24px var(--conf-bar-glow);
+  animation: stamp-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes stamp-in {
+  0% { transform: scale(0.85); opacity: 0.6; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ===== 关4 选择 ===== */
+.friend-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 24px 60px;
+  width: 100%;
+  gap: 24px;
+}
+.friend-scenario {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 24px 28px;
+  max-width: 520px;
+  width: 100%;
+}
+.friend-scenario .fs-label {
+  font-size: 12px;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 12px;
+}
+.friend-scenario .fs-text {
+  font-size: 15px;
+  color: var(--color-text-muted);
+  line-height: 1.8;
+}
+.friend-scenario .fs-quote {
+  margin: 12px 0 0;
+  padding: 12px 16px;
+  border-left: 3px solid var(--color-border-light);
+  font-size: 15px;
+  color: var(--color-text);
+  font-style: italic;
+}
+.friend-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 520px;
+}
+.friend-question-label {
+  font-size: 15px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+.friend-option {
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  font-size: 15px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.friend-option:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+.friend-option .fo-label {
+  font-weight: 700;
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+.friend-option.chosen {
+  border-color: var(--color-accent);
+  background: #2a1e0a;
+}
+
+/* 转折卡片 */
+.friend-twist {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  max-width: 520px;
+}
+.friend-twist-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 28px;
+  text-align: center;
+}
+.friend-twist-card .ft-question {
+  font-size: 16px;
+  color: var(--color-text-muted);
+  line-height: 1.8;
+  margin-bottom: 20px;
+}
+.friend-selected-quote {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-accent);
+  background: #2a1e0a;
+  border: 1px solid var(--color-accent);
+  border-radius: 12px;
+  padding: 18px 24px;
+  text-align: center;
+  width: 100%;
+  max-width: 520px;
+  line-height: 1.7;
+  display: none;
+}
+
+/* ===== 关5 宣告 ===== */
+.declare-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 24px 60px;
+  width: 100%;
+  gap: 28px;
+}
+.declare-header { text-align: center; }
+.declare-header h2 { font-size: 24px; margin-bottom: 10px; }
+.declare-header p { font-size: 15px; color: var(--color-text-muted); line-height: 1.7; }
+.declare-sentence {
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-border);
+  border-radius: 16px;
+  padding: 28px 32px;
+  font-size: 20px;
+  line-height: 2.0;
+  color: var(--color-text-muted);
+  text-align: center;
+  width: 100%;
+  max-width: 520px;
+}
+.declare-blank {
+  display: inline-block;
+  min-width: 90px;
+  border-bottom: 2px solid var(--color-accent);
+  color: var(--color-accent);
+  font-weight: 700;
+  padding: 0 4px 2px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+  vertical-align: bottom;
+}
+.declare-blank:hover {
+  background: #2a1e0a;
+  border-radius: 4px;
+}
+.declare-blank.filled {
+  border-bottom-color: var(--color-accent);
+  color: var(--color-accent);
+}
+.declare-blank .blank-placeholder {
+  color: var(--color-text-dim);
+  font-weight: 400;
+  font-size: 16px;
+}
+/* 词库弹出 */
+.word-picker {
+  display: none;
+  position: fixed;
+  z-index: 200;
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-border-light);
+  border-radius: 12px;
+  padding: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: 320px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.word-picker.open {
+  display: flex;
+}
+.word-option {
+  padding: 8px 16px;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  font-size: 14px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+.word-option:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: #2a1e0a;
+}
+/* 宣告光芒 */
+.declare-glow-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  pointer-events: none;
+}
+.declare-glow-overlay.active {
+  display: block;
+  animation: glow-burst 1.2s ease-out forwards;
+}
+@keyframes glow-burst {
+  0% { background: radial-gradient(circle at 50% 50%, #f5a62300, transparent 70%); }
+  30% { background: radial-gradient(circle at 50% 50%, #f5a62322, transparent 60%); }
+  100% { background: radial-gradient(circle at 50% 50%, #f5a62300, transparent 70%); }
+}
+.declare-confirmed {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+  max-width: 520px;
+  text-align: center;
+}
+.declare-confirmed .dc-sentence {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-accent);
+  background: linear-gradient(135deg, #2a1e0a, #3d2a10);
+  border: 1.5px solid var(--color-accent);
+  border-radius: 16px;
+  padding: 24px 32px;
+  line-height: 1.8;
+  width: 100%;
+  box-shadow: 0 0 30px var(--conf-bar-glow);
+}
+.declare-confirmed .dc-hint {
+  font-size: 14px;
+  color: var(--color-text-dim);
+}
+
+/* ===== 关6 爆发 ===== */
+.recap-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 50px 24px 60px;
+  width: 100%;
+  gap: 12px;
+  text-align: center;
+}
+.recap-line {
+  font-size: 16px;
+  color: var(--color-text-muted);
+  line-height: 1.8;
+  opacity: 0;
+  animation: none;
+}
+.recap-line.reveal {
+  animation: fadeInUp 0.6s ease-out forwards;
+}
+.recap-line.recap-achievement {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-accent);
+}
+.recap-line.recap-affirmation {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 6px 0;
+}
+.recap-line.recap-declaration {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-accent);
+}
+.recap-line.recap-section-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--color-text-dim);
+  margin-top: 20px;
+}
+.recap-btn-wrap {
+  margin-top: 36px;
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+.recap-btn-wrap.visible { opacity: 1; }
+
+/* ===== 通关画面 ===== */
+.complete-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80vh;
+  padding: 60px 24px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+}
+.complete-rings {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.complete-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-accent);
+  opacity: 0;
+  animation: ring-expand 3s ease-out infinite;
+}
+.complete-ring:nth-child(1) { width: 120px; height: 120px; animation-delay: 0s; }
+.complete-ring:nth-child(2) { width: 200px; height: 200px; animation-delay: 0.6s; }
+.complete-ring:nth-child(3) { width: 320px; height: 320px; animation-delay: 1.2s; }
+.complete-ring:nth-child(4) { width: 460px; height: 460px; animation-delay: 1.8s; }
+@keyframes ring-expand {
+  0% { transform: scale(0.3); opacity: 0.7; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+.complete-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+.complete-title {
+  font-size: 56px;
+  font-weight: 900;
+  color: var(--color-accent);
+  letter-spacing: 4px;
+  line-height: 1;
+  text-shadow: 0 0 40px var(--conf-bar-glow);
+  animation: title-glow 2s ease-in-out infinite alternate;
+}
+@keyframes title-glow {
+  from { text-shadow: 0 0 20px #f5a62360; }
+  to   { text-shadow: 0 0 50px #f5a623aa, 0 0 80px #f5a62344; }
+}
+.complete-subtitle {
+  font-size: 17px;
+  color: var(--color-text-muted);
+  line-height: 1.9;
+  max-width: 380px;
+  animation: fadeInUp 1s ease-out 0.5s both;
+}
+.complete-declaration-box {
+  background: linear-gradient(135deg, #2a1e0a, #3d2a10);
+  border: 1.5px solid var(--color-accent);
+  border-radius: 16px;
+  padding: 20px 32px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-accent);
+  max-width: 480px;
+  line-height: 1.8;
+  animation: fadeInUp 1s ease-out 1s both;
+  box-shadow: 0 0 30px var(--conf-bar-glow);
+}
+.complete-btns {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+  animation: fadeInUp 1s ease-out 1.5s both;
+}
+
+/* 粒子 */
+.conf-particle {
+  position: fixed;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  pointer-events: none;
+  z-index: 200;
+  animation: conf-float var(--dur, 4s) var(--delay, 0s) infinite ease-in-out;
+  opacity: 0;
+  display: none;
+}
+.conf-particle.visible {
+  display: block;
+  opacity: 0.7;
+}
+@keyframes conf-float {
+  0%   { transform: translate(0, 0) scale(1); opacity: 0.7; }
+  50%  { transform: translate(var(--dx, 20px), -50px) scale(1.3); opacity: 0.3; }
+  100% { transform: translate(0, 0) scale(1); opacity: 0.7; }
+}
+</style>
+</head>
+<body>
+
+<!-- Topbar -->
+<nav class="game-topbar" id="gameTopbar">
+  <a class="game-topbar__back" href="../">← 返回游戏中心</a>
+  <h1 class="game-topbar__title">我本如此</h1>
+  <div class="game-topbar__progress" id="gameProgress">
+    <div class="game-topbar__dot" data-step="0"></div>
+    <div class="game-topbar__dot" data-step="1"></div>
+    <div class="game-topbar__dot" data-step="2"></div>
+    <div class="game-topbar__dot" data-step="3"></div>
+    <div class="game-topbar__dot" data-step="4"></div>
+    <div class="game-topbar__dot" data-step="5"></div>
+  </div>
+</nav>
+
+<!-- 光芒条 -->
+<div class="conf-light-widget" id="lightWidget" style="display:none;">
+  <span class="conf-light-label">你的内在之光</span>
+  <div class="conf-light-track">
+    <div class="conf-light-fill" id="confLightFill"></div>
+  </div>
+  <span class="conf-light-text" id="confLightText">刚刚开始</span>
+</div>
+
+<!-- 词库弹出层 -->
+<div class="word-picker" id="wordPicker"></div>
+
+<!-- 宣告光芒 -->
+<div class="declare-glow-overlay" id="declareGlow"></div>
+
+<!-- 粒子 -->
+<div class="conf-particle visible" style="left:10%; top:20%; --dur:4.2s; --delay:0s; --dx:18px;"></div>
+<div class="conf-particle" style="left:85%; top:15%; --dur:3.8s; --delay:0.7s; --dx:-22px;"></div>
+<div class="conf-particle" style="left:50%; top:10%; --dur:5s; --delay:1.4s; --dx:12px;"></div>
+<div class="conf-particle" style="left:20%; top:70%; --dur:4.5s; --delay:0.3s; --dx:-16px;"></div>
+<div class="conf-particle" style="left:75%; top:65%; --dur:3.5s; --delay:1s; --dx:24px;"></div>
+
+<!-- ===== INTRO ===== -->
+<div class="screen active" id="screen-intro">
+  <div class="intro-hero fade-in">
+    <span class="conf-title-icon">✦</span>
+    <h1>我本如此</h1>
+    <p class="subtitle">不是变得自信<br>是想起你一直都是</p>
+    <div class="intro-meta">
+      <div class="intro-meta-item">🕐 <span>约 5 分钟</span></div>
+      <div class="intro-meta-item">🎯 <span>6 关递进体验</span></div>
+      <div class="intro-meta-item">🌿 <span>无对错，只有发现</span></div>
+    </div>
+    <button class="btn" onclick="startGame()">开始 →</button>
+  </div>
+</div>
+
+<!-- ===== 关1 呼吸 ===== -->
+<div class="screen" id="screen-level-1">
+  <div class="breath-container fade-in">
+    <div class="breath-prompt">
+      先放松一下。<br>跟着这个光，呼吸三次就好。
+    </div>
+    <div class="breath-orb-wrap">
+      <div class="breath-orb-ring breath-orb-ring-1" id="breathRing1"></div>
+      <div class="breath-orb-ring breath-orb-ring-2" id="breathRing2"></div>
+      <div class="breath-orb" id="breathOrb">
+        <div class="breath-orb-text" id="breathOrbText">准备好了吗</div>
+      </div>
+    </div>
+    <div class="breath-count" id="breathCount"></div>
+    <div class="breath-done-msg" id="breathDoneMsg">
+      很好。<br>你已经能控制自己的节奏了。<em>这本身就是一种力量。</em>
+    </div>
+    <button class="btn" id="breathStartBtn" onclick="startBreath()">开始呼吸</button>
+    <button class="btn" id="breathDoneBtn" style="display:none;" onclick="completeLevel(1)">感受到了 →</button>
+  </div>
+</div>
+
+<!-- ===== 关2 想起 ===== -->
+<div class="screen" id="screen-level-2">
+  <div class="achieve-container fade-in">
+    <div class="achieve-header">
+      <h2>你做成过这些</h2>
+      <p>选 3 个你做到过的事。<br>这些你全都经历过。</p>
+    </div>
+    <div class="achieve-count-bar">
+      已选 <span class="count-num" id="achieveCount">0</span> / 3
+    </div>
+    <div class="achieve-grid" id="achieveGrid">
+      <!-- 动态生成 -->
+    </div>
+    <div class="achieve-badges" id="achieveBadges"></div>
+    <button class="btn" id="achieveNextBtn" style="display:none;" onclick="completeLevel(2)">这就是我 →</button>
+  </div>
+</div>
+
+<!-- ===== 关3 说出 ===== -->
+<div class="screen" id="screen-level-3">
+  <div class="saychoise-container fade-in">
+    <div class="saychoice-header">
+      <h2>对自己说一句话</h2>
+      <p>有件事让你有点紧张。<br>你会对自己说哪句话？</p>
+    </div>
+    <div class="saychoice-options" id="saychoiceOptions">
+      <!-- 动态生成 -->
+    </div>
+    <div id="saychoiceCompleteMsg" style="display:none; text-align:center; color: var(--color-text-muted); font-size:15px; line-height:1.8;">
+      这是你说的。<br>记住这句话的感觉。
+    </div>
+    <button class="btn" id="saychoiceNextBtn" style="display:none;" onclick="completeLevel(3)">继续 →</button>
+  </div>
+</div>
+
+<!-- ===== 关4 选择 ===== -->
+<div class="screen" id="screen-level-4">
+  <div class="friend-container fade-in">
+    <div class="friend-scenario">
+      <div class="fs-label">场景</div>
+      <div class="fs-text">
+        你的朋友小林，明天有个重要的汇报。他很紧张，来问你怎么办。
+        <div class="fs-quote">「我怕讲到一半忘词，大家都盯着我。」</div>
+      </div>
+    </div>
+    <div class="friend-question-label">你会对他说什么？</div>
+    <div class="friend-options" id="friendOptions">
+      <!-- 动态生成 -->
+    </div>
+    <!-- 转折 -->
+    <div class="friend-twist" id="friendTwist">
+      <div class="friend-twist-card">
+        <div class="ft-question">
+          小林听了你说的话，放松了一些。<br>然后他反问你：<br><br>
+          「其实……你自己有没有这样的时刻？」
+        </div>
+        <button class="btn" onclick="showFriendQuote()">有过。</button>
+      </div>
+    </div>
+    <!-- 你说的那句话 -->
+    <div class="friend-selected-quote" id="friendSelectedQuote"></div>
+    <div id="friendCompleteMsg" style="display:none; text-align:center; color: var(--color-text-muted); font-size:15px; line-height:1.8;"></div>
+    <button class="btn" id="friendNextBtn" style="display:none;" onclick="completeLevel(4)">继续 →</button>
+  </div>
+</div>
+
+<!-- ===== 关5 宣告 ===== -->
+<div class="screen" id="screen-level-5">
+  <div class="declare-container fade-in">
+    <div class="declare-header">
+      <h2>写下你的宣告</h2>
+      <p>点击括号，从词库里选一个词。</p>
+    </div>
+    <div class="declare-sentence" id="declareSentence">
+      我是一个
+      <span class="declare-blank" id="blank-trait" onclick="openPicker('trait', event)">
+        <span class="blank-placeholder">（性格）</span>
+      </span>
+      的人，<br>
+      面对
+      <span class="declare-blank" id="blank-facing" onclick="openPicker('facing', event)">
+        <span class="blank-placeholder">（挑战）</span>
+      </span>
+      ，<br>
+      我选择
+      <span class="declare-blank" id="blank-choice" onclick="openPicker('choice', event)">
+        <span class="blank-placeholder">（行动）</span>
+      </span>
+      。
+    </div>
+    <button class="btn" id="declareConfirmBtn" style="display:none;" onclick="confirmDeclaration()">这就是我的宣告 ✦</button>
+    <!-- 宣告确认后 -->
+    <div class="declare-confirmed" id="declareConfirmed">
+      <div class="dc-sentence" id="dcSentenceText"></div>
+      <div class="dc-hint">这句话是真的。</div>
+      <button class="btn" onclick="completeLevel(5)">继续 →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 关6 爆发 ===== -->
+<div class="screen" id="screen-level-6">
+  <div class="recap-container" id="recapContainer">
+    <!-- 动态生成 -->
+  </div>
+</div>
+
+<!-- ===== 通关 ===== -->
+<div class="screen" id="screen-complete">
+  <div class="complete-screen">
+    <div class="complete-rings">
+      <div class="complete-ring"></div>
+      <div class="complete-ring"></div>
+      <div class="complete-ring"></div>
+      <div class="complete-ring"></div>
+    </div>
+    <div class="complete-content">
+      <div class="complete-title">我本如此</div>
+      <div class="complete-subtitle">
+        不是变得自信。<br>是想起了你一直都是。
+      </div>
+      <div class="complete-declaration-box" id="completeDeclarationBox"></div>
+      <div class="complete-btns">
+        <button class="btn" onclick="copyDeclaration()">保存这句话</button>
+        <button class="btn btn-ghost" onclick="resetGame()">再来一次</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="../game-utils.js"></script>
+<script>
+
+// ===== 游戏状态 =====
+const gameState = {
+  currentLevel: 0,
+  lightValue: 0,
+  lightTargets: [15, 30, 47, 64, 82, 100],
+  achievements: [],
+  affirmation: '',
+  declaration: { trait: '', facing: '', choice: '' },
+  friendChoice: ''
+};
+
+// ===== 光芒条 =====
+function getLightLabel(v) {
+  if (v <= 0)  return '刚刚开始';
+  if (v <= 20) return '有点感觉了';
+  if (v <= 40) return '越来越清晰';
+  if (v <= 65) return '就是这样！';
+  if (v <= 99) return '势不可挡';
+  return '我本如此 ✦';
+}
+
+function animateLightBar(targetVal, onComplete) {
+  const fill = document.getElementById('confLightFill');
+  const textEl = document.getElementById('confLightText');
+  fill.style.width = targetVal + '%';
+  if (targetVal > 0) fill.classList.add('has-value');
+  fill.classList.remove('pulse-anim');
+  void fill.offsetWidth; // reflow
+  fill.classList.add('pulse-anim');
+  textEl.textContent = getLightLabel(targetVal);
+  gameState.lightValue = targetVal;
+  setTimeout(() => {
+    fill.classList.remove('pulse-anim');
+    if (onComplete) onComplete();
+  }, 900);
+}
+
+// showScreen() → 已由 game-utils.js 提供
+
+// ===== 开始游戏 =====
+function startGame() {
+  document.getElementById('lightWidget').style.display = 'flex';
+  showScreen('level-1');
+  TopbarProgress.update({ activeIndex: 0, doneUpTo: 0 });
+}
+
+// ===== 完成一关 =====
+function completeLevel(level) {
+  const levelIndex = level - 1;
+  const target = gameState.lightTargets[levelIndex];
+  animateLightBar(target, () => {
+    TopbarProgress.update({ activeIndex: levelIndex + 1, doneUpTo: levelIndex + 1 });
+    setTimeout(() => {
+      showScreen('level-' + (level + 1));
+      initLevel(level + 1);
+    }, 300);
+  });
+}
+
+// ===== 初始化各关 =====
+function initLevel(level) {
+  if (level === 2) initAchieve();
+  if (level === 3) initSayChoice();
+  if (level === 4) initFriend();
+  if (level === 5) initDeclare();
+  if (level === 6) initRecap();
+}
+
+// ===== 关1：呼吸 =====
+let breathTimer = null;
+let breathCycle = 0;
+let breathPhaseIdx = 0;
+
+const BREATH_PHASES = [
+  { label: '吸气...', duration: 2500, cls: 'inhale' },
+  { label: '屏住...', duration: 1000, cls: 'hold' },
+  { label: '呼气...', duration: 4000, cls: 'exhale' }
+];
+
+function startBreath() {
+  document.getElementById('breathStartBtn').style.display = 'none';
+  breathCycle = 0;
+  breathPhaseIdx = 0;
+  runBreathPhase();
+}
+
+function runBreathPhase() {
+  if (breathCycle >= 3) {
+    // 全部完成
+    const orb = document.getElementById('breathOrb');
+    orb.className = 'breath-orb';
+    document.getElementById('breathOrbText').textContent = '✦';
+    document.getElementById('breathCount').textContent = '';
+    document.getElementById('breathDoneMsg').style.display = 'block';
+    document.getElementById('breathDoneBtn').style.display = 'inline-block';
+    return;
+  }
+  const phase = BREATH_PHASES[breathPhaseIdx];
+  const orb = document.getElementById('breathOrb');
+  const orbText = document.getElementById('breathOrbText');
+  const countEl = document.getElementById('breathCount');
+
+  orb.className = 'breath-orb ' + phase.cls;
+  orbText.textContent = phase.label;
+  countEl.textContent = '第 ' + (breathCycle + 1) + ' 次 / 共 3 次';
+
+  // 数秒倒计时
+  const totalSec = phase.duration / 1000;
+  let remaining = totalSec;
+  const tick = setInterval(() => {
+    remaining -= 0.5;
+    if (remaining <= 0) clearInterval(tick);
+  }, 500);
+
+  breathTimer = setTimeout(() => {
+    clearInterval(tick);
+    breathPhaseIdx++;
+    if (breathPhaseIdx >= BREATH_PHASES.length) {
+      breathPhaseIdx = 0;
+      breathCycle++;
+    }
+    runBreathPhase();
+  }, phase.duration);
+}
+
+// ===== 关2：想起 =====
+const ACHIEVEMENTS = [
+  { text: '学会了一样新东西', hint: '这需要好奇心' },
+  { text: '帮助过某个人', hint: '这需要善意' },
+  { text: '坚持完成了一件难事', hint: '这需要坚持' },
+  { text: '面对过不喜欢的事', hint: '这需要勇气' },
+  { text: '主动说出了自己的想法', hint: '这需要勇气' },
+  { text: '做了一个不容易的决定', hint: '这需要判断力' },
+  { text: '独自解决了一个问题', hint: '这需要独立' },
+  { text: '适应了一个新环境', hint: '这需要韧性' }
+];
+
+function initAchieve() {
+  gameState.achievements = [];
+  document.getElementById('achieveCount').textContent = '0';
+  document.getElementById('achieveNextBtn').style.display = 'none';
+  document.getElementById('achieveBadges').style.display = 'none';
+
+  const grid = document.getElementById('achieveGrid');
+  grid.innerHTML = '';
+  ACHIEVEMENTS.forEach((a, i) => {
+    const el = document.createElement('div');
+    el.className = 'achieve-item';
+    el.dataset.idx = i;
+    el.innerHTML = `<div class="ai-check"></div><span>${a.text}</span>`;
+    el.onclick = () => toggleAchieve(el, a);
+    grid.appendChild(el);
+  });
+}
+
+function toggleAchieve(el, a) {
+  if (el.classList.contains('selected')) {
+    el.classList.remove('selected');
+    el.querySelector('.ai-check').textContent = '';
+    gameState.achievements = gameState.achievements.filter(x => x !== a.text);
+  } else {
+    if (gameState.achievements.length >= 3) return;
+    el.classList.add('selected');
+    el.querySelector('.ai-check').textContent = '✓';
+    gameState.achievements.push(a.text);
+  }
+  document.getElementById('achieveCount').textContent = gameState.achievements.length;
+  if (gameState.achievements.length === 3) {
+    showAchieveBadges();
+  } else {
+    document.getElementById('achieveNextBtn').style.display = 'none';
+    document.getElementById('achieveBadges').style.display = 'none';
+  }
+}
+
+function showAchieveBadges() {
+  const badgesEl = document.getElementById('achieveBadges');
+  badgesEl.innerHTML = '';
+  gameState.achievements.forEach((a, i) => {
+    const b = document.createElement('div');
+    b.className = 'achieve-badge';
+    b.textContent = a;
+    b.style.animationDelay = (i * 0.1) + 's';
+    badgesEl.appendChild(b);
+  });
+  badgesEl.style.display = 'flex';
+  document.getElementById('achieveNextBtn').style.display = 'inline-block';
+}
+
+// ===== 关3：说出 =====
+const SAY_OPTIONS = [
+  '「我会尽力的。」',
+  '「我有能力处理这件事。」',
+  '「我做好准备了。」'
+];
+
+function initSayChoice() {
+  gameState.affirmation = '';
+  document.getElementById('saychoiceCompleteMsg').style.display = 'none';
+  document.getElementById('saychoiceNextBtn').style.display = 'none';
+
+  const opts = document.getElementById('saychoiceOptions');
+  opts.innerHTML = '';
+  SAY_OPTIONS.forEach(opt => {
+    const el = document.createElement('div');
+    el.className = 'saychoice-option';
+    el.textContent = opt;
+    el.onclick = () => selectSayChoice(el, opt);
+    opts.appendChild(el);
+  });
+}
+
+function selectSayChoice(el, opt) {
+  // 清除其他
+  document.querySelectorAll('.saychoice-option').forEach(o => o.classList.remove('chosen'));
+  // 其他选项淡出
+  document.querySelectorAll('.saychoice-option').forEach(o => {
+    if (o !== el) o.style.opacity = '0.3';
+  });
+  el.classList.add('chosen');
+  el.style.opacity = '1';
+
+  gameState.affirmation = opt.replace(/「|」/g, '');
+
+  setTimeout(() => {
+    document.getElementById('saychoiceCompleteMsg').style.display = 'block';
+    document.getElementById('saychoiceNextBtn').style.display = 'inline-block';
+  }, 800);
+}
+
+// ===== 关4：选择 =====
+const FRIEND_OPTIONS = [
+  '没事的，把最重要的说清楚就好。',
+  '你准备了这么久，你对内容最熟悉。',
+  '就算磕绊几次也没关系，内容才是关键。',
+  '深呼吸，记住你为什么要说这件事。'
+];
+
+function initFriend() {
+  gameState.friendChoice = '';
+  document.getElementById('friendTwist').style.display = 'none';
+  document.getElementById('friendSelectedQuote').style.display = 'none';
+  document.getElementById('friendCompleteMsg').style.display = 'none';
+  document.getElementById('friendNextBtn').style.display = 'none';
+
+  const opts = document.getElementById('friendOptions');
+  opts.innerHTML = '';
+  const labels = ['A', 'B', 'C', 'D'];
+  FRIEND_OPTIONS.forEach((opt, i) => {
+    const el = document.createElement('div');
+    el.className = 'friend-option';
+    el.innerHTML = `<span class="fo-label">${labels[i]}</span><span>${opt}</span>`;
+    el.onclick = () => selectFriendOption(el, opt);
+    opts.appendChild(el);
+  });
+}
+
+function selectFriendOption(el, opt) {
+  document.querySelectorAll('.friend-option').forEach(o => {
+    o.classList.remove('chosen');
+    o.style.pointerEvents = 'none';
+    o.style.opacity = '0.4';
+  });
+  el.classList.add('chosen');
+  el.style.opacity = '1';
+  gameState.friendChoice = opt;
+
+  setTimeout(() => {
+    document.getElementById('friendOptions').style.display = 'none';
+    document.getElementById('friendTwist').style.display = 'flex';
+  }, 500);
+}
+
+function showFriendQuote() {
+  document.getElementById('friendTwist').style.display = 'none';
+
+  const quoteEl = document.getElementById('friendSelectedQuote');
+  quoteEl.textContent = gameState.friendChoice;
+  quoteEl.style.display = 'block';
+
+  const msgEl = document.getElementById('friendCompleteMsg');
+  msgEl.innerHTML = '你刚才给小林的那句话，<br>现在也适用于你。';
+  msgEl.style.display = 'block';
+
+  setTimeout(() => {
+    document.getElementById('friendNextBtn').style.display = 'inline-block';
+  }, 600);
+}
+
+// ===== 关5：宣告 =====
+const WORD_BANKS = {
+  trait:  ['认真', '有韧性', '善于思考', '在意别人', '愿意尝试'],
+  facing: ['压力', '不确定', '别人的目光', '挑战', '改变'],
+  choice: ['继续', '表达自己', '深呼吸再说', '迈出一步', '相信自己']
+};
+
+let currentPickerKey = null;
+
+function initDeclare() {
+  gameState.declaration = { trait: '', facing: '', choice: '' };
+  document.getElementById('declareConfirmBtn').style.display = 'none';
+  document.getElementById('declareConfirmed').style.display = 'none';
+  document.getElementById('declareSentence').style.display = 'block';
+
+  // 重置 blank
+  ['trait', 'facing', 'choice'].forEach(key => {
+    const el = document.getElementById('blank-' + key);
+    el.classList.remove('filled');
+    el.innerHTML = `<span class="blank-placeholder">${key === 'trait' ? '（性格）' : key === 'facing' ? '（挑战）' : '（行动）'}</span>`;
+    el.onclick = (e) => openPicker(key, e);
+  });
+}
+
+function openPicker(key, event) {
+  event.stopPropagation();
+  closePicker();
+  currentPickerKey = key;
+  const picker = document.getElementById('wordPicker');
+  picker.innerHTML = '';
+  WORD_BANKS[key].forEach(word => {
+    const el = document.createElement('div');
+    el.className = 'word-option';
+    el.textContent = word;
+    el.onclick = (e) => { e.stopPropagation(); selectWord(key, word); };
+    picker.appendChild(el);
+  });
+
+  const rect = document.getElementById('blank-' + key).getBoundingClientRect();
+  picker.style.left = Math.min(rect.left, window.innerWidth - 340) + 'px';
+  picker.style.top = (rect.bottom + 8 + window.scrollY) + 'px';
+  picker.classList.add('open');
+}
+
+function closePicker() {
+  document.getElementById('wordPicker').classList.remove('open');
+  currentPickerKey = null;
+}
+
+document.addEventListener('click', closePicker);
+
+function selectWord(key, word) {
+  gameState.declaration[key] = word;
+  const el = document.getElementById('blank-' + key);
+  el.classList.add('filled');
+  el.textContent = word;
+  el.onclick = (e) => openPicker(key, e);
+  closePicker();
+
+  // 检查是否全部填完
+  const { trait, facing, choice } = gameState.declaration;
+  if (trait && facing && choice) {
+    document.getElementById('declareConfirmBtn').style.display = 'inline-block';
+  }
+}
+
+function confirmDeclaration() {
+  const { trait, facing, choice } = gameState.declaration;
+  const sentence = `我是一个${trait}的人，面对${facing}，我选择${choice}。`;
+
+  // 触发光芒效果
+  const glow = document.getElementById('declareGlow');
+  glow.classList.add('active');
+  setTimeout(() => glow.classList.remove('active'), 1200);
+
+  document.getElementById('declareSentence').style.display = 'none';
+  document.getElementById('declareConfirmBtn').style.display = 'none';
+
+  const confirmed = document.getElementById('declareConfirmed');
+  document.getElementById('dcSentenceText').textContent = sentence;
+  confirmed.style.display = 'flex';
+  confirmed.style.animation = 'fadeInUp 0.6s ease-out';
+}
+
+// ===== 关6：爆发回顾 =====
+function initRecap() {
+  TopbarProgress.update({ activeIndex: 5, doneUpTo: 5 });
+  const { trait, facing, choice } = gameState.declaration;
+  const declarationSentence = `一个${trait}的人，面对${facing}，选择${choice}。`;
+
+  const lines = [
+    { text: '你已经做到了这些——', cls: 'recap-section-label' },
+    ...gameState.achievements.map(a => ({ text: a, cls: 'recap-achievement' })),
+    { text: '你对自己说——', cls: 'recap-section-label' },
+    { text: gameState.affirmation, cls: 'recap-affirmation' },
+    { text: '你是——', cls: 'recap-section-label' },
+    { text: declarationSentence, cls: 'recap-declaration' }
+  ];
+
+  const container = document.getElementById('recapContainer');
+  container.innerHTML = '';
+
+  lines.forEach((line, i) => {
+    const el = document.createElement('div');
+    el.className = 'recap-line ' + line.cls;
+    el.textContent = line.text;
+    container.appendChild(el);
+  });
+
+  // 按钮
+  const btnWrap = document.createElement('div');
+  btnWrap.className = 'recap-btn-wrap';
+  btnWrap.innerHTML = '<button class="btn" onclick="showComplete()">我知道了 ✦</button>';
+  container.appendChild(btnWrap);
+
+  // 逐行淡入
+  const lineEls = container.querySelectorAll('.recap-line');
+  lineEls.forEach((el, i) => {
+    setTimeout(() => {
+      el.classList.add('reveal');
+      el.style.animationDelay = '0s';
+    }, i * 350);
+  });
+
+  setTimeout(() => {
+    btnWrap.classList.add('visible');
+  }, lines.length * 350 + 400);
+}
+
+// ===== 通关 =====
+function showComplete() {
+  animateLightBar(100, () => {
+    TopbarProgress.completeAll();
+    const { trait, facing, choice } = gameState.declaration;
+    const sentence = `我是一个${trait}的人，面对${facing}，我选择${choice}。`;
+    document.getElementById('completeDeclarationBox').textContent = sentence;
+
+    // 显示所有粒子
+    document.querySelectorAll('.conf-particle').forEach(p => p.classList.add('visible'));
+
+    showScreen('complete');
+  });
+}
+
+function copyDeclaration() {
+  const { trait, facing, choice } = gameState.declaration;
+  const sentence = `我是一个${trait}的人，面对${facing}，我选择${choice}。`;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(sentence).then(() => {
+      const btn = event.target;
+      btn.textContent = '已复制 ✓';
+      setTimeout(() => btn.textContent = '保存这句话', 2000);
+    });
+  } else {
+    // fallback
+    const ta = document.createElement('textarea');
+    ta.value = sentence;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+}
+
+function resetGame() {
+  // 重置状态
+  gameState.currentLevel = 0;
+  gameState.lightValue = 0;
+  gameState.achievements = [];
+  gameState.affirmation = '';
+  gameState.declaration = { trait: '', facing: '', choice: '' };
+  gameState.friendChoice = '';
+
+  // 重置 UI
+  animateLightBar(0);
+  TopbarProgress.reset();
+  document.getElementById('confLightFill').classList.remove('has-value');
+  document.getElementById('confLightText').textContent = '刚刚开始';
+  document.getElementById('lightWidget').style.display = 'none';
+
+  // 重置各关 DOM
+  if (breathTimer) clearTimeout(breathTimer);
+  document.getElementById('breathDoneMsg').style.display = 'none';
+  document.getElementById('breathDoneBtn').style.display = 'none';
+  document.getElementById('breathStartBtn').style.display = 'inline-block';
+  const orb = document.getElementById('breathOrb');
+  orb.className = 'breath-orb';
+  document.getElementById('breathOrbText').textContent = '准备好了吗';
+  document.getElementById('breathCount').textContent = '';
+
+  document.querySelectorAll('.conf-particle').forEach(p => p.classList.remove('visible'));
+  document.querySelectorAll('.conf-particle')[0].classList.add('visible');
+
+  showScreen('intro');
+}
+</script>
+</body>
+</html>
+

@@ -1,0 +1,387 @@
+/* =====================================================
+   STUDY GAME — Shared Design System
+   study_game/shared.css
+
+   用法：
+   1. 在游戏 <head> 中引入：<link rel="stylesheet" href="../shared.css">
+   2. 在游戏 <style> 里覆盖主题色：
+        :root { --accent: #3b82f6; --accent-dim: rgba(59,130,246,0.25); }
+   3. 用标准 HTML 结构（见 _template/index.html）
+===================================================== */
+
+/* ===== 设计令牌 ===== */
+:root {
+  /* 基础色板 */
+  --bg:           #0f0f1a;
+  --surface:      #1a1a2e;
+  --surface-alt:  #12121f;
+  --border:       #2a2a4a;
+  --border-light: #3a3a5a;
+
+  /* 文字层次 */
+  --text:         #e0e0e0;
+  --text-muted:   #8888a8;
+  --text-dim:     #55556a;
+
+  /* 语义色 */
+  --success:      #10b981;
+  --warning:      #f59e0b;
+  --danger:       #ef4444;
+
+  /* 主题色（每个游戏覆盖这两个变量） */
+  --accent:     #7c83ff;
+  --accent-dim: rgba(124, 131, 255, 0.25);
+
+  /* 圆角 */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+}
+
+/* ===== 重置 ===== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* =====================================================
+   TOPBAR
+   结构：.game-topbar > [__back, __title, __progress > __dot×N]
+===================================================== */
+.game-topbar {
+  width: 100%;
+  padding: 13px 24px;
+  background: var(--surface);
+  border-bottom: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  flex-shrink: 0;
+}
+
+.game-topbar__back {
+  padding: 6px 14px;
+  background: var(--border);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: none;
+  transition: color 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.game-topbar__back:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.game-topbar__title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+  text-align: center;
+}
+
+.game-topbar__progress {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.game-topbar__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border);
+  border: 2px solid var(--border-light);
+  transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
+}
+.game-topbar__dot--done {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.game-topbar__dot--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 8px var(--accent-dim);
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+/* =====================================================
+   SCREEN 切换系统
+   用 showScreen(id) 切换，id 对应 #screen-{id}
+===================================================== */
+.screen {
+  display: none;
+  width: 100%;
+  max-width: 760px;
+  padding: 40px 20px 64px;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+.screen.active { display: flex; }
+
+/* =====================================================
+   BUTTONS
+   .btn 是基类，搭配修饰词使用：
+   .btn-primary / .btn-success / .btn-warning / .btn-danger / .btn-ghost
+===================================================== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 11px 30px;
+  border: none;
+  border-radius: var(--r-md);
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+  text-decoration: none;
+  white-space: nowrap;
+  color: #fff;
+}
+.btn:hover   { transform: translateY(-2px); }
+.btn:active  { transform: translateY(0); }
+.btn:disabled { opacity: 0.38; cursor: not-allowed; transform: none !important; }
+
+.btn-primary {
+  background: var(--accent);
+  box-shadow: 0 3px 14px var(--accent-dim);
+}
+.btn-primary:hover { box-shadow: 0 6px 22px var(--accent-dim); }
+
+.btn-success { background: var(--success); }
+.btn-warning { background: var(--warning); color: #000; }
+.btn-danger  { background: var(--danger); }
+
+.btn-ghost {
+  background: transparent;
+  border: 1.5px solid var(--border-light);
+  color: var(--text-muted);
+}
+.btn-ghost:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: none;
+}
+
+/* =====================================================
+   CARD
+===================================================== */
+.card {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 24px;
+}
+.card--accent {
+  border-color: var(--accent);
+}
+
+/* =====================================================
+   GAME INTRO 屏
+   结构：.game-intro > [__icon, __title, __desc, __meta, btn]
+===================================================== */
+.game-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+  padding-top: 16px;
+  width: 100%;
+}
+.game-intro__icon {
+  font-size: 52px;
+  animation: float-icon 3s ease-in-out infinite;
+}
+@keyframes float-icon {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-8px); }
+}
+.game-intro__title {
+  font-size: 34px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+.game-intro__desc {
+  font-size: 15px;
+  color: var(--text-muted);
+  line-height: 1.9;
+  max-width: 480px;
+}
+.game-intro__meta {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 2px 0 8px;
+}
+.game-intro__meta span { color: var(--text-muted); }
+
+/* =====================================================
+   LEVEL COMPLETE 卡片
+===================================================== */
+.level-complete {
+  width: 100%;
+  max-width: 520px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 32px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.level-complete__label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+.level-complete__text {
+  font-size: 16px;
+  color: var(--text-muted);
+  line-height: 1.85;
+}
+.level-complete__text em {
+  font-style: normal;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* =====================================================
+   COMPLETE 通关屏
+   结构：.complete-screen > [__rings, __content > [__title, __desc, __actions]]
+===================================================== */
+.complete-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 70vh;
+  text-align: center;
+  gap: 20px;
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  padding: 60px 20px;
+}
+.complete-screen__rings {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.complete-screen__ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  opacity: 0;
+  animation: ring-expand 3s ease-out infinite;
+}
+.complete-screen__ring:nth-child(1) { width: 120px; height: 120px; animation-delay: 0s;   }
+.complete-screen__ring:nth-child(2) { width: 200px; height: 200px; animation-delay: 0.6s; }
+.complete-screen__ring:nth-child(3) { width: 320px; height: 320px; animation-delay: 1.2s; }
+.complete-screen__ring:nth-child(4) { width: 460px; height: 460px; animation-delay: 1.8s; }
+@keyframes ring-expand {
+  0%   { transform: scale(0.3); opacity: 0.6; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+.complete-screen__content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+.complete-screen__title {
+  font-size: 50px;
+  font-weight: 900;
+  color: var(--accent);
+  letter-spacing: 3px;
+  animation: title-glow 2.5s ease-in-out infinite alternate;
+}
+@keyframes title-glow {
+  from { text-shadow: 0 0 20px var(--accent-dim); }
+  to   { text-shadow: 0 0 50px var(--accent), 0 0 90px var(--accent-dim); }
+}
+.complete-screen__desc {
+  font-size: 15px;
+  color: var(--text-muted);
+  line-height: 1.9;
+  max-width: 380px;
+  animation: fadeInUp 0.8s ease-out 0.5s both;
+}
+.complete-screen__actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  animation: fadeInUp 0.8s ease-out 1s both;
+}
+
+/* =====================================================
+   动画
+===================================================== */
+.fade-in      { animation: fadeInUp 0.4s ease-out both; }
+.fade-in-slow { animation: fadeInUp 0.8s ease-out both; }
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* =====================================================
+   工具类
+===================================================== */
+.text-accent  { color: var(--accent); }
+.text-success { color: var(--success); }
+.text-warning { color: var(--warning); }
+.text-danger  { color: var(--danger); }
+.text-muted   { color: var(--text-muted); }
+.text-dim     { color: var(--text-dim); }
+
+/* =====================================================
+   响应式
+===================================================== */
+@media (max-width: 600px) {
+  .game-topbar { padding: 11px 16px; }
+  .game-topbar__title { font-size: 14px; }
+  .screen { padding: 24px 14px 48px; }
+  .game-intro__title { font-size: 26px; }
+  .complete-screen__title { font-size: 36px; }
+}

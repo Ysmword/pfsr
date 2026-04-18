@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>学习游戏中心</title>
+    <link rel="stylesheet" href="shared.css">
+    <style>
+        body { padding: 60px 20px; justify-content: flex-start; }
+        h1 {
+            font-size: 36px;
+            color: #7c83ff;
+            margin-bottom: 8px;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 15px;
+            margin-bottom: 50px;
+        }
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 24px;
+            max-width: 750px;
+            width: 100%;
+        }
+        .card {
+            background: #1a1a2e;
+            border: 2px solid #2a2a4a;
+            border-radius: 16px;
+            padding: 32px;
+            transition: all 0.3s;
+            cursor: pointer;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+        .card:hover {
+            border-color: #7c83ff;
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(124, 131, 255, 0.15);
+        }
+        .card-icon {
+            font-size: 40px;
+            margin-bottom: 16px;
+        }
+        .card h2 {
+            font-size: 20px;
+            margin-bottom: 8px;
+        }
+        .card-desc {
+            color: #888;
+            font-size: 14px;
+            line-height: 1.8;
+            margin-bottom: 16px;
+        }
+        .card-tags {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .tag {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+        .card-io { border-color: #0f3460; }
+        .card-io:hover { border-color: #3b82f6; box-shadow: 0 12px 40px rgba(59, 130, 246, 0.15); }
+        .card-io h2 { color: #60a5fa; }
+        .card-io .tag { background: #1e3a5f; color: #60a5fa; }
+
+        .card-mvcc { border-color: #2d1b4e; }
+        .card-mvcc:hover { border-color: #7c83ff; box-shadow: 0 12px 40px rgba(124, 131, 255, 0.15); }
+        .card-mvcc h2 { color: #7c83ff; }
+        .card-mvcc .tag { background: #2a2050; color: #a78bfa; }
+
+        .card-confidence { border-color: #3d2a10; }
+        .card-confidence:hover { border-color: #f5a623; box-shadow: 0 12px 40px rgba(245, 166, 35, 0.15); }
+        .card-confidence h2 { color: #f5a623; }
+        .card-confidence .tag { background: #3d2a10; color: #f5a623; }
+
+        .footer {
+            margin-top: 60px;
+            color: #444;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <h1>学习游戏中心</h1>
+    <p class="subtitle">通过交互游戏，深入理解计算机核心概念</p>
+
+    <div class="cards">
+        <a class="card card-io" href="/study_game/io_multiplexing/">
+            <div class="card-icon">🔌</div>
+            <h2>I/O 多路复用模拟器</h2>
+            <p class="card-desc">
+                扮演操作系统内核，亲手走一遍 select、poll、epoll 的完整流程。
+                体验逐个扫描的痛苦，感受 epoll 的高效。
+            </p>
+            <div class="card-tags">
+                <span class="tag">select</span>
+                <span class="tag">poll</span>
+                <span class="tag">epoll</span>
+                <span class="tag">Redis 事件循环</span>
+            </div>
+        </a>
+
+        <a class="card card-mvcc" href="/study_game/mvcc/">
+            <div class="card-icon">🔄</div>
+            <h2>MVCC 闯关游戏</h2>
+            <p class="card-desc">
+                6 关循序渐进，从版本链到 ReadView，从可见性判断到 RC/RR 对比。
+                亲手构建、判断、对比，彻底理解多版本并发控制。
+            </p>
+            <div class="card-tags">
+                <span class="tag">版本链</span>
+                <span class="tag">ReadView</span>
+                <span class="tag">RC / RR</span>
+                <span class="tag">MySQL InnoDB</span>
+            </div>
+        </a>
+        <a class="card card-confidence" href="/study_game/confidence/">
+            <div class="card-icon">✦</div>
+            <h2>我本如此</h2>
+            <p class="card-desc">
+                5分钟，6关递进体验。<br>
+                不是学什么，是想起你本来就有的力量。
+            </p>
+            <div class="card-tags">
+                <span class="tag">自信构建</span>
+                <span class="tag">班杜拉理论</span>
+                <span class="tag">6关·约5分钟</span>
+            </div>
+        </a>
+    </div>
+
+    <p class="footer">持续更新中...</p>
+</body>
+</html>
