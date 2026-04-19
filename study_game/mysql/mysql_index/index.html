@@ -314,6 +314,27 @@
   </div>
 </div>
 
+<!-- 失败屏 -->
+<div class="screen" id="screen-failed">
+  <div class="failed-screen">
+    <div class="failed-screen__rings">
+      <div class="failed-screen__ring"></div>
+      <div class="failed-screen__ring"></div>
+      <div class="failed-screen__ring"></div>
+      <div class="failed-screen__ring"></div>
+    </div>
+    <div class="failed-screen__content fade-in-slow">
+      <div class="failed-screen__icon">💥</div>
+      <div class="failed-screen__title">挑战失败</div>
+      <p class="failed-screen__desc" id="failed-desc"></p>
+      <div class="failed-screen__actions">
+        <button class="btn btn-danger" onclick="resetGame()">重新挑战</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- 通关 -->
 <div class="screen" id="screen-complete">
   <div class="complete-screen">
@@ -340,14 +361,21 @@
 <script src="../../game-utils.js"></script>
 <script>
 const G_TOTAL = 5;
-function startGame() { showScreen('level-1'); TopbarProgress.update({activeIndex:0}); initL1(); }
+function startGame() { Mistakes.reset(); showScreen('level-1'); TopbarProgress.update({activeIndex:0}); initL1(); }
 function completeLevel(n) {
   TopbarProgress.update({doneUpTo:n, activeIndex: n<G_TOTAL?n:-1});
   if (n<G_TOTAL) showScreen('level-'+(n+1));
-  else { TopbarProgress.completeAll(); showScreen('complete'); }
+  else {
+    TopbarProgress.completeAll();
+    if(Mistakes.get()>0){
+      document.getElementById('failed-desc').textContent=`本次有 ${Mistakes.get()} 关答错了，知识点还需要加强，再来一次！`;
+      showScreen('failed');
+    } else { showScreen('complete'); }
+  }
 }
-function resetGame() { TopbarProgress.reset(); showScreen('intro'); }
+function resetGame() { TopbarProgress.reset(); Mistakes.reset(); showScreen('intro'); }
 function showFb(prefix, ok, vOk, vBad, exOk, exBad) {
+  if(!ok) Mistakes.add();
   const fb = document.getElementById(prefix+'-fb');
   fb.className='feedback-card '+(ok?'correct':'wrong');
   document.getElementById(prefix+'-vd').textContent=ok?vOk:vBad;

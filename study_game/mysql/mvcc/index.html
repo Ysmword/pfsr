@@ -559,6 +559,11 @@ let state = {
 const app = document.getElementById('app');
 
 function render() {
+    // 每次渲染前，若当前关卡有 feedback-wrong，标记该关曾答错
+    const ls = state.levelState;
+    if (ls && ls.feedback && ls.feedback.type === 'feedback-wrong' && !ls.hadWrong) {
+        ls.hadWrong = true;
+    }
     switch (state.screen) {
         case 'welcome': renderWelcome(); break;
         case 'level': renderLevel(); break;
@@ -1971,10 +1976,13 @@ function l6_rrSubmit() {
 
 // ===== GAME OVER =====
 function renderGameOver() {
+    const failed = Mistakes.get() > 0;
     app.innerHTML = `
         <div class="header">
-            <h1>恭喜通关！</h1>
-            <p class="subtitle">你已经完整掌握了 MVCC 的核心机制</p>
+            <h1>${failed ? '挑战失败 💥' : '恭喜通关！'}</h1>
+            <p class="subtitle">${failed
+                ? `本次有 ${Mistakes.get()} 关答错了，知识点还需要加强，再来一次！`
+                : '你已经完整掌握了 MVCC 的核心机制'}</p>
             ${renderProgressBar()}
         </div>
         <div class="card">
@@ -1999,13 +2007,15 @@ function renderGameOver() {
             <hr class="separator">
             <p class="text-muted text-center">MVCC 的核心价值：<strong>读不阻塞写，写不阻塞读</strong>，大大提升了并发性能。</p>
             <div class="btn-group" style="justify-content:center;">
-                <button class="btn btn-outline" onclick="restartGame()">再玩一次</button>
+                <button class="${failed ? 'btn btn-danger' : 'btn btn-outline'}" onclick="restartGame()">${failed ? '重新挑战' : '再玩一次'}</button>
+                <a class="btn btn-outline" href="/study_game/">返回游戏中心</a>
             </div>
         </div>`;
 }
 
 // ===== GAME FLOW =====
 function startGame() {
+    Mistakes.reset();
     state.screen = 'level';
     state.currentLevel = 0;
     state.phase = 'intro';
@@ -2021,6 +2031,7 @@ function startLevelPlay() {
 }
 
 function levelComplete() {
+    if (state.levelState.hadWrong) Mistakes.add();
     state.levelScores[state.currentLevel] = { results: state.levelState.results || {} };
     state.phase = 'complete';
     render();
@@ -2040,6 +2051,7 @@ function showGameOver() {
 }
 
 function restartGame() {
+    Mistakes.reset();
     state = { screen: 'welcome', currentLevel: 0, phase: 'intro', levelState: {}, levelScores: [] };
     render();
 }

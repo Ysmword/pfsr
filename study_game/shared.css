@@ -356,6 +356,85 @@ body {
 }
 
 /* =====================================================
+   FAILED 失败屏
+   结构：.failed-screen > [__rings, __content > [__icon, __title, __desc, __actions]]
+   用法：与 .complete-screen 对称，颜色换为 --danger
+===================================================== */
+.failed-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 70vh;
+  text-align: center;
+  gap: 20px;
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  padding: 60px 20px;
+}
+.failed-screen__rings {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.failed-screen__ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid var(--danger);
+  opacity: 0;
+  animation: ring-expand 3s ease-out infinite;
+}
+.failed-screen__ring:nth-child(1) { width: 120px; height: 120px; animation-delay: 0s;   }
+.failed-screen__ring:nth-child(2) { width: 200px; height: 200px; animation-delay: 0.6s; }
+.failed-screen__ring:nth-child(3) { width: 320px; height: 320px; animation-delay: 1.2s; }
+.failed-screen__ring:nth-child(4) { width: 460px; height: 460px; animation-delay: 1.8s; }
+.failed-screen__content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+.failed-screen__icon {
+  font-size: 56px;
+  line-height: 1;
+}
+.failed-screen__title {
+  font-size: 50px;
+  font-weight: 900;
+  color: var(--danger);
+  letter-spacing: 3px;
+  animation: title-glow-red 2.5s ease-in-out infinite alternate;
+}
+@keyframes title-glow-red {
+  from { text-shadow: 0 0 20px rgba(239,68,68,0.3); }
+  to   { text-shadow: 0 0 50px var(--danger), 0 0 90px rgba(239,68,68,0.3); }
+}
+.failed-screen__desc {
+  font-size: 15px;
+  color: var(--text-muted);
+  line-height: 1.9;
+  max-width: 380px;
+  animation: fadeInUp 0.8s ease-out 0.5s both;
+}
+.failed-screen__actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  animation: fadeInUp 0.8s ease-out 1s both;
+}
+
+@media (max-width: 600px) {
+  .failed-screen__title { font-size: 36px; }
+}
+
+/* =====================================================
    动画
 ===================================================== */
 .fade-in      { animation: fadeInUp 0.4s ease-out both; }

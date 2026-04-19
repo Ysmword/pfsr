@@ -40,6 +40,20 @@ const TopbarProgress = (() => {
   };
 })();
 
+/* ----- 错误计数 API -----
+   跟踪本局答错的关卡数，用于最终判断通关 or 失败。
+
+   Mistakes.add()    — 当前关答错，计数 +1
+   Mistakes.reset()  — 重置（startGame / resetGame 时调用）
+   Mistakes.get()    — 获取当前错误数
+----------------------------------------------------- */
+const Mistakes = {
+  count: 0,
+  add()   { this.count++; },
+  reset() { this.count = 0; },
+  get()   { return this.count; }
+};
+
 /* ----- 屏幕切换 -----
    showScreen('level-1')  → 激活 #screen-level-1
    自动滚动到顶部。

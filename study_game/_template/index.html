@@ -194,7 +194,28 @@
 </div>
 
 
-<!-- ⑦ 通关屏（固定结构，改标题/描述） -->
+<!-- ⑦-A 失败屏（固定结构，无需改内容） -->
+<div class="screen" id="screen-failed">
+  <div class="failed-screen">
+    <div class="failed-screen__rings">
+      <div class="failed-screen__ring"></div>
+      <div class="failed-screen__ring"></div>
+      <div class="failed-screen__ring"></div>
+      <div class="failed-screen__ring"></div>
+    </div>
+    <div class="failed-screen__content fade-in-slow">
+      <div class="failed-screen__icon">💥</div>
+      <div class="failed-screen__title">挑战失败</div>
+      <p class="failed-screen__desc" id="failed-desc"></p>
+      <div class="failed-screen__actions">
+        <button class="btn btn-danger" onclick="resetGame()">重新挑战</button>
+        <a class="btn btn-ghost" href="/study_game/">返回游戏中心</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ⑦-B 通关屏（固定结构，改标题/描述） -->
 <div class="screen" id="screen-complete">
   <div class="complete-screen">
     <div class="complete-screen__rings">
@@ -236,6 +257,7 @@ const G = {
 ===================================================== */
 
 function startGame() {
+  Mistakes.reset();
   showScreen('level-1');
   TopbarProgress.update({ activeIndex: 0 });
 }
@@ -249,12 +271,19 @@ function completeLevel(n) {
     showScreen('level-' + next);
   } else {
     TopbarProgress.completeAll();
-    showScreen('complete');
+    if (Mistakes.get() > 0) {
+      document.getElementById('failed-desc').textContent =
+        `本次有 ${Mistakes.get()} 关答错了，知识点还需要加强，再来一次！`;
+      showScreen('failed');
+    } else {
+      showScreen('complete');
+    }
   }
 }
 
 function resetGame() {
   TopbarProgress.reset();
+  Mistakes.reset();
   // 重置游戏状态...
   showScreen('intro');
 }
@@ -281,6 +310,7 @@ function selectOption(el, level, choice) {
 function submitLevel1() {
   const choice  = G.level1Choice;
   const correct = choice === ANSWERS.level1;
+  if (!correct) Mistakes.add();
   const fb      = document.getElementById('level1Feedback');
   fb.className  = 'feedback-card ' + (correct ? 'correct' : 'wrong');
 
